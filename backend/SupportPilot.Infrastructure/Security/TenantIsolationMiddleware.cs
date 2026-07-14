@@ -12,11 +12,11 @@ namespace SupportPilot.Infrastructure.Security;
 /// Intercepts inbound calls, decodes the JWT bearer claims, validates role scopes,
 /// and securely hydrates the ITenantContext to prevent cross-tenant leakages.
 /// </summary>
-public class TenantMiddleware
+public class TenantIsolationMiddleware
 {
     private readonly RequestDelegate _next;
 
-    public TenantMiddleware(RequestDelegate next)
+    public TenantIsolationMiddleware(RequestDelegate next)
     {
         _next = next;
     }

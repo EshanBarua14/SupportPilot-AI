@@ -123,4 +123,66 @@ public class IncidentsController : ControllerBase
 
         return Ok(new { Success = true, Message = "Incident status updated to SOLVED." });
     }
+
+    /// <summary>
+    /// Updates the status of an incident and broadcasts the update via SignalR.
+    /// </summary>
+    [HttpPost("{id:guid}/status")]
+    [HasPermission("L1_ENGINEER")]
+    public async Task<IActionResult> UpdateIncidentStatus(Guid id, [FromBody] UpdateStatusRequest request)
+    {
+        var command = new UpdateIncidentStatusCommand(id, request.Status);
+        bool success = await _mediator.Send(command);
+
+        if (!success)
+        {
+            return BadRequest(new { Message = "Incident not found or could not be updated." });
+        }
+
+        string groupName = $"Tenant-{_tenantContext.TenantId}";
+        await _hubContext.Clients.Group(groupName).ReceiveIncidentUpdate("STATUS_UPDATED", new { IncidentId = id, Status = request.Status });
+
+        return Ok(new { Success = true, Message = $"Incident status updated to {request.Status}." });
+    }
+
+    /// <summary>
+    /// Fetches the audit log timeline for a specific incident.
+    /// </summary>
+    [HttpGet("{id:guid}/timeline")]
+    [HasPermission("READ_ONLY")]
+    public async Task<ActionResult<List<TimelineEventDto>>> GetIncidentTimeline(Guid id)
+    {
+        var query = new GetIncidentTimelineQuery(id);
+        var result = await _mediator.Send(query);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Attaches diagnostic telemetry or state logs to an incident.
+    /// </summary>
+    [HttpPost("{id:guid}/diagnostics")]
+    [HasPermission("L1_ENGINEER")]
+    public async Task<IActionResult> AttachDiagnosticData(Guid id, [FromBody] AttachDiagnosticRequest request)
+    {
+        var command = new AttachDiagnosticDataCommand(id, request.DataType, request.JsonData);
+        bool success = await _mediator.Send(command);
+
+        if (!success)
+        {
+            return BadRequest(new { Message = "Incident not found or diagnostics could not be attached." });
+        }
+
+        return Ok(new { Success = true, Message = "Diagnostic telemetry successfully attached." });
+    }
+}
+
+public class UpdateStatusRequest
+{
+    public string Status { get; set; } = string.Empty;
+}
+
+public class AttachDiagnosticRequest
+{
+    public string DataType { get; set; } = string.Empty;
+    public string JsonData { get; set; } = string.Empty;
 }

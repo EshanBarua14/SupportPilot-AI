@@ -23,6 +23,7 @@ export default function ShortcutsModal({ isOpen, onClose }: ShortcutsModalProps)
         { keys: ["Alt", "A"], desc: "Go to Active Agents console" },
         { keys: ["Alt", "M"], desc: "Show Performance Metrics and Health" },
         { keys: ["Alt", "D"], desc: "Toggle Sidebar Expanded / Pinned" },
+        { keys: ["Alt", "F"], desc: "Focus Unified Full-Text Search" },
       ]
     },
     {

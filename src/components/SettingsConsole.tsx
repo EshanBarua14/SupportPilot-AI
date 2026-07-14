@@ -5,13 +5,12 @@ import * as Icons from 'lucide-react';
 interface SettingsConsoleProps {
   modelSelection: string;
   onSetModelSelection: (model: string) => void;
+  theme: string;
+  onSetTheme: (theme: string) => void;
 }
 
-export default function SettingsConsole({ modelSelection, onSetModelSelection }: SettingsConsoleProps) {
+export default function SettingsConsole({ modelSelection, onSetModelSelection, theme, onSetTheme }: SettingsConsoleProps) {
   const user = ActiveUser;
-  const [theme, setTheme] = React.useState(() => {
-    return localStorage.getItem('supportpilot_theme') || 'slate';
-  });
 
   const models = [
     { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash", desc: "Optimal speed, high-fidelity L1/L2 triage, and rapid distributed trace searches." },
@@ -97,42 +96,56 @@ export default function SettingsConsole({ modelSelection, onSetModelSelection }:
             <span>UI Presentation & Theme Settings</span>
           </h3>
           <p className="text-xxs text-slate-400 mb-3.5 leading-relaxed">
-            Customize the global visual appearance of SupportPilot. Choose between high-contrast Dark Slate or highly legible Neutral Zinc.
+            Customize the global visual appearance of SupportPilot. Choose between high-contrast Dark Slate, legible Light Zinc, immersive Deep Space, or Accessibility High Contrast.
           </p>
 
-          <div className="grid grid-cols-2 gap-3.5">
+          <div className="grid grid-cols-2 gap-3">
             <button
-              onClick={() => {
-                localStorage.setItem('supportpilot_theme', 'slate');
-                document.documentElement.classList.remove('theme-slate', 'theme-zinc');
-                document.documentElement.classList.add('theme-slate');
-                setTheme('slate');
-              }}
+              onClick={() => onSetTheme('slate')}
               className={`flex items-center space-x-2 rounded-lg p-2.5 border transition-all cursor-pointer ${
                 theme === 'slate'
-                  ? 'bg-indigo-600/20 border-indigo-500/80 text-white'
+                  ? 'bg-indigo-600/20 border-indigo-500/80 text-white font-bold'
                   : 'bg-slate-900/50 border-slate-800/80 text-slate-400 hover:bg-slate-800/30'
               }`}
             >
-              <div className="h-3.5 w-3.5 rounded-full bg-slate-950 border border-slate-700" />
-              <span className="font-bold text-xxs">Slate (Dark)</span>
+              <div className="h-3 w-3 rounded-full bg-slate-950 border border-slate-700" />
+              <span className="text-xxs">Slate (Dark)</span>
             </button>
 
             <button
-              onClick={() => {
-                localStorage.setItem('supportpilot_theme', 'zinc');
-                document.documentElement.classList.remove('theme-slate', 'theme-zinc');
-                document.documentElement.classList.add('theme-zinc');
-                setTheme('zinc');
-              }}
+              onClick={() => onSetTheme('zinc')}
               className={`flex items-center space-x-2 rounded-lg p-2.5 border transition-all cursor-pointer ${
                 theme === 'zinc'
-                  ? 'bg-indigo-600/20 border-indigo-500/80 text-white'
+                  ? 'bg-indigo-600/20 border-indigo-500/80 text-white font-bold'
                   : 'bg-slate-900/50 border-slate-800/80 text-slate-400 hover:bg-slate-800/30'
               }`}
             >
-              <div className="h-3.5 w-3.5 rounded-full bg-white border border-slate-300" />
-              <span className="font-bold text-xxs">Zinc (Light)</span>
+              <div className="h-3 w-3 rounded-full bg-white border border-slate-300" />
+              <span className="text-xxs">Zinc (Light)</span>
+            </button>
+
+            <button
+              onClick={() => onSetTheme('deepspace')}
+              className={`flex items-center space-x-2 rounded-lg p-2.5 border transition-all cursor-pointer ${
+                theme === 'deepspace'
+                  ? 'bg-indigo-600/20 border-indigo-500/80 text-white font-bold'
+                  : 'bg-slate-900/50 border-slate-800/80 text-slate-400 hover:bg-slate-800/30'
+              }`}
+            >
+              <div className="h-3 w-3 rounded-full bg-indigo-950 border border-indigo-500 animate-pulse" />
+              <span className="text-xxs">Deep Space</span>
+            </button>
+
+            <button
+              onClick={() => onSetTheme('highcontrast')}
+              className={`flex items-center space-x-2 rounded-lg p-2.5 border transition-all cursor-pointer ${
+                theme === 'highcontrast'
+                  ? 'bg-indigo-600/20 border-indigo-500/80 text-white font-bold'
+                  : 'bg-slate-900/50 border-slate-800/80 text-slate-400 hover:bg-slate-800/30'
+              }`}
+            >
+              <div className="h-3 w-3 rounded-full bg-black border border-white" />
+              <span className="text-xxs">High Contrast</span>
             </button>
           </div>
         </div>

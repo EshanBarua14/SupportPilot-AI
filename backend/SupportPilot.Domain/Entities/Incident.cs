@@ -5,7 +5,7 @@ namespace SupportPilot.Domain.Entities;
 /// <summary>
 /// Represents an infrastructure incident isolated inside a tenant Organization.
 /// </summary>
-public class Incident
+public class Incident : IAuditable
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     
@@ -31,7 +31,10 @@ public class Incident
     
     public int SlaLimitMins { get; set; } = 60;
     
+    public string CreatedBy { get; set; } = "System";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public string? ModifiedBy { get; set; }
+    public DateTime? ModifiedAt { get; set; }
     
     public DateTime? ResolvedAt { get; set; }
 

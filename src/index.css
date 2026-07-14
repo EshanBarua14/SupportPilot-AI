@@ -1,10 +1,11 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&family=Alex+Brush&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
   --font-display: "Space Grotesk", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
+  --font-signature: "Alex Brush", cursive;
   
   --color-slate-950: #020617;
   --color-slate-900: #0f172a;
@@ -76,18 +77,144 @@ html.theme-zinc .border-slate-900 {
 html.theme-zinc .acrylic-card {
   background: rgba(250, 250, 250, 0.8) !important;
   border: 1px solid rgba(9, 9, 11, 0.1) !important;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.03) !important;
+}
+
+html.theme-zinc .bento-card-premium {
+  background: #ffffff !important;
+  border: 1px solid #e4e4e7 !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.02), 0 10px 20px -5px rgba(0,0,0,0.03) !important;
 }
 
 html.theme-zinc input,
 html.theme-zinc select,
 html.theme-zinc textarea {
   color: #18181b !important;
-  background-color: #fafafa !important;
+  background-color: #ffffff !important;
   border-color: #d4d4d8 !important;
 }
 
 html.theme-zinc input::placeholder {
   color: #a1a1aa !important;
+}
+
+/* Deep Space Theme Overrides */
+html.theme-deepspace {
+  --color-slate-950: #02010c;
+  --color-slate-900: #0a0624;
+  --color-slate-800: #140d42;
+  --color-slate-700: #231861;
+  --color-slate-600: #3e2e94;
+  
+  --color-body-text: #e0e7ff;
+  color-scheme: dark;
+}
+
+html.theme-deepspace body {
+  background-color: #02010c;
+  color: #e0e7ff;
+  background-image: radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.08) 0%, transparent 80%) !important;
+}
+
+html.theme-deepspace .bg-slate-950 {
+  background-color: #02010c !important;
+}
+
+html.theme-deepspace .bg-slate-900 {
+  background-color: #0a0624 !important;
+}
+
+html.theme-deepspace .bento-card-premium {
+  background: linear-gradient(135deg, rgba(10, 6, 36, 0.7) 0%, rgba(3, 2, 20, 0.4) 100%) !important;
+  border-color: rgba(99, 102, 241, 0.15) !important;
+  box-shadow: 0 0 25px rgba(99, 102, 241, 0.03) !important;
+}
+
+html.theme-deepspace .bento-card-premium:hover {
+  border-color: rgba(139, 92, 246, 0.4) !important;
+  box-shadow: 0 0 30px rgba(139, 92, 246, 0.08) !important;
+}
+
+/* High Contrast Theme Overrides */
+html.theme-highcontrast {
+  --color-slate-950: #000000;
+  --color-slate-900: #000000;
+  --color-slate-800: #ffffff;
+  --color-slate-700: #ffffff;
+  --color-slate-600: #a1a1aa;
+  
+  --color-body-text: #ffffff;
+  color-scheme: dark;
+}
+
+html.theme-highcontrast body {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+}
+
+html.theme-highcontrast .bg-slate-950,
+html.theme-highcontrast .bg-slate-900,
+html.theme-highcontrast .bg-slate-900\/50,
+html.theme-highcontrast .bg-slate-900\/30,
+html.theme-highcontrast .bg-slate-950\/80,
+html.theme-highcontrast .bg-slate-950\/40,
+html.theme-highcontrast .bg-slate-950\/20,
+html.theme-highcontrast .bento-card-premium,
+html.theme-highcontrast .acrylic-card,
+html.theme-highcontrast aside,
+html.theme-highcontrast header {
+  background-color: #000000 !important;
+  background: #000000 !important;
+  border: 1.5px solid #ffffff !important;
+  border-radius: 4px !important;
+  box-shadow: none !important;
+}
+
+html.theme-highcontrast button {
+  border-radius: 4px !important;
+}
+
+html.theme-highcontrast .border-slate-800,
+html.theme-highcontrast .border-slate-800\/80,
+html.theme-highcontrast .border-slate-800\/40,
+html.theme-highcontrast .border-slate-900,
+html.theme-highcontrast .border-r,
+html.theme-highcontrast .border-b,
+html.theme-highcontrast .border-t,
+html.theme-highcontrast .border {
+  border-color: #ffffff !important;
+}
+
+html.theme-highcontrast .text-slate-400,
+html.theme-highcontrast .text-slate-500,
+html.theme-highcontrast .text-slate-300,
+html.theme-highcontrast .text-slate-200,
+html.theme-highcontrast .text-slate-100 {
+  color: #ffffff !important;
+}
+
+html.theme-highcontrast .text-indigo-400,
+html.theme-highcontrast .text-indigo-300 {
+  color: #00ff66 !important; /* neon green */
+}
+
+html.theme-highcontrast .bg-indigo-600,
+html.theme-highcontrast .bg-indigo-600\/20 {
+  background-color: #00ff66 !important;
+  color: #000000 !important;
+  border: 1px solid #ffffff !important;
+}
+
+html.theme-highcontrast .text-white {
+  color: #ffffff !important;
+}
+
+html.theme-highcontrast input,
+html.theme-highcontrast select,
+html.theme-highcontrast textarea {
+  color: #ffffff !important;
+  background-color: #000000 !important;
+  border: 1.5px solid #ffffff !important;
 }
 
 @keyframes glow {
@@ -101,22 +228,22 @@ html.theme-zinc input::placeholder {
 
 /* Custom Scrollbar Styles for premium desktop terminal look */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.3);
-  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.05);
+  border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.2);
-  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.15);
+  border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.4);
+  background: rgba(148, 163, 184, 0.3);
 }
 
 body {
@@ -124,25 +251,46 @@ body {
   color: var(--color-body-text, #f8fafc);
   font-family: var(--font-sans);
   overflow-x: hidden;
+  letter-spacing: -0.011em;
 }
 
 .acrylic-card {
-  background: rgba(15, 23, 42, 0.65);
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+/* Masterwork UI Bento Style Box Elements */
+.bento-card-premium {
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.4) 0%, rgba(15, 23, 42, 0.1) 100%);
   backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2), 0 12px 24px -10px rgba(0,0,0,0.3);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.bento-card-premium:hover {
+  border-color: rgba(99, 102, 241, 0.15);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2), 0 20px 30px -8px rgba(99, 102, 241, 0.04);
 }
 
 .glow-indigo {
-  box-shadow: 0 0 15px rgba(99, 102, 241, 0.15);
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.1);
 }
 
 .glow-emerald {
-  box-shadow: 0 0 15px rgba(16, 185, 129, 0.15);
+  box-shadow: 0 0 15px rgba(16, 185, 129, 0.1);
 }
 
 .glow-rose {
-  box-shadow: 0 0 15px rgba(244, 63, 94, 0.15);
+  box-shadow: 0 0 15px rgba(244, 63, 94, 0.1);
+}
+
+/* Handwriting signature font */
+.font-signature {
+  font-family: var(--font-signature), cursive;
 }
 
 /* Custom text fade animations */

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Incident, LogEntry, TimelineEvent, Tenant } from '../types';
 import { InitialIncidents, SeedTenants } from '../data/simulation';
 import * as Icons from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import IncidentDetailsDrawer from './IncidentDetailsDrawer';
 
 interface IncidentWorkspaceProps {
@@ -13,6 +14,10 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
   const [incidents, setIncidents] = useState<Incident[]>(InitialIncidents);
   const [selectedIncident, setSelectedIncident] = useState<Incident>(InitialIncidents[0]);
   const [drawerIncidentId, setDrawerIncidentId] = useState<string | null>(null);
+
+  const [bulkMode, setBulkMode] = useState(false);
+  const [selectedIncidentIds, setSelectedIncidentIds] = useState<string[]>([]);
+  const [priorityOnly, setPriorityOnly] = useState(false);
 
   useEffect(() => {
     const handleSelect = (e: Event) => {
@@ -29,6 +34,61 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
     window.addEventListener('select-incident', handleSelect);
     return () => window.removeEventListener('select-incident', handleSelect);
   }, [incidents]);
+
+  // Listener for Alt+P custom event (toggle priority only)
+  useEffect(() => {
+    const handleTogglePriority = () => {
+      setPriorityOnly(prev => !prev);
+    };
+    window.addEventListener('toggle-priority-filter', handleTogglePriority);
+    return () => window.removeEventListener('toggle-priority-filter', handleTogglePriority);
+  }, []);
+
+  // Listener for Alt+N custom event (create blank incident)
+  useEffect(() => {
+    const handleCreateTicket = () => {
+      const newId = `inc_${(incidents.length + 1).toString().padStart(3, '0')}`;
+      const newTicket: Incident = {
+        id: newId,
+        tenantId: "ten_acme_01",
+        title: "NEW TICKET: [Pending Specification]",
+        severity: "MEDIUM",
+        status: "OPEN",
+        assignee: "Eshan Barua",
+        createdAt: new Date().toISOString(),
+        appName: "System Service",
+        description: "Specify incident telemetry parameters and investigate immediately.",
+        slaLimitMins: 60,
+        slaRemainingSecs: 3600,
+        source: "Email",
+        customerName: "Support Operator",
+        customerProfile: "System created manual incident card for deep investigation.",
+        logs: [
+          { timestamp: new Date().toISOString(), level: 'INFO', source: 'System', message: 'Manual ticket instantiated by Eshan Barua.' }
+        ],
+        metrics: [],
+        traces: [],
+        dbState: { connectionsActive: 0, poolLimit: 100, locksCount: 0, slowQueries: [] },
+        apiCalls: [],
+        queueState: { queueName: "system-queue", messageCount: 0, consumerCount: 0, unackedCount: 0 }
+      };
+
+      setIncidents(prev => [newTicket, ...prev]);
+      setSelectedIncident(newTicket);
+      onAddAuditLog(
+        "Eshan Barua (CTO)", 
+        "Create Incident", 
+        "Operational Workspace", 
+        "SUCCESS", 
+        `Instantiated new manual incident ticket card with reference id: ${newId}`
+      );
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: `Ticket ${newId} initialized successfully!` }
+      }));
+    };
+    window.addEventListener('create-new-ticket', handleCreateTicket);
+    return () => window.removeEventListener('create-new-ticket', handleCreateTicket);
+  }, [incidents, onAddAuditLog]);
   
   // Tab within the Telemetry Panel
   const [telemetryTab, setTelemetryTab] = useState<'logs' | 'metrics' | 'traces' | 'db' | 'k8s'>('logs');
@@ -55,6 +115,7 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
 
   // Customer Response draft
   const [responseDraft, setResponseDraft] = useState('');
+  const [responseSuccessMessage, setResponseSuccessMessage] = useState<string | null>(null);
 
   // Live countdown timer for SLA
   useEffect(() => {
@@ -310,7 +371,8 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
       `Sent automated response to client on channel ${selectedIncident.source}. Ticket status: CLOSED.`
     );
 
-    alert(`Response successfully delivered via client ${selectedIncident.source} SDK channel! Ticket resolved.`);
+    setResponseSuccessMessage(`Response successfully delivered via client ${selectedIncident.source} SDK channel! Ticket resolved.`);
+    setTimeout(() => setResponseSuccessMessage(null), 5000);
   };
 
   // Helper to render high-fidelity custom line area metric graph in inline SVG
@@ -389,103 +451,176 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
   return (
     <div className="grid h-[calc(100vh-130px)] grid-cols-12 gap-4 text-xs font-sans">
       {/* 1. COMPREHENSIVE INCIDENT CASE QUEUE (Sidebar Left) */}
-      <div className="col-span-3 flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-        <h3 className="mb-2.5 font-display font-bold text-sm text-indigo-400 uppercase tracking-wider flex items-center space-x-1.5">
-          <Icons.ShieldAlert className="h-4.5 w-4.5" />
+      <div className="col-span-3 flex flex-col overflow-hidden bento-card-premium p-4">
+        <h3 className="mb-3 font-display font-bold text-sm text-indigo-400 uppercase tracking-wider flex items-center space-x-2 text-white">
+          <Icons.ShieldAlert className="h-4.5 w-4.5 text-indigo-400" />
           <span>Active Operations Queue</span>
         </h3>
-        <div className="flex-1 space-y-2 overflow-y-auto pr-1">
-          {incidents.map((inc) => {
-            const isSelected = inc.id === selectedIncident.id;
-            const isSolved = inc.status === 'SOLVED';
-            return (
-              <button
-                key={inc.id}
-                onClick={() => {
-                  setSelectedIncident(inc);
-                  setDrawerIncidentId(inc.id);
-                }}
-                className={`w-full flex flex-col rounded-lg p-3 border text-left transition-all relative overflow-hidden ${
-                  isSelected 
-                    ? 'bg-slate-950 border-indigo-500/80 shadow-md shadow-indigo-500/5' 
-                    : 'bg-slate-900/50 border-slate-800/80 hover:bg-slate-800/30'
-                }`}
-              >
-                {/* Active SLA countdown color strip */}
-                <div className={`absolute top-0 left-0 bottom-0 w-1 ${
-                  isSolved ? 'bg-emerald-500' : inc.severity === 'CRITICAL' ? 'bg-rose-500' : 'bg-amber-500'
-                }`} />
 
-                <div className="pl-1.5 space-y-2.5 w-full">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[9px] text-slate-500">{inc.id}</span>
-                    <span className={`rounded-full px-2 py-0.5 font-mono text-[9px] font-bold ${getSeverityBadge(inc.severity)}`}>
-                      {inc.severity}
-                    </span>
-                  </div>
-                  
-                  <div>
-                    <h4 className="font-bold text-white text-xs leading-snug line-clamp-2">{inc.title}</h4>
-                    <p className="text-[10px] text-indigo-400 font-medium mt-1">{getTenantName(inc.tenantId)}</p>
-                  </div>
+        {/* Professional Ops Toolbar */}
+        <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-slate-800/40 gap-1.5">
+          <button
+            onClick={() => setPriorityOnly(!priorityOnly)}
+            className={`flex-1 flex items-center justify-center space-x-1.5 rounded-lg py-1.5 px-2 border transition-all cursor-pointer ${
+              priorityOnly
+                ? 'bg-rose-500/10 border-rose-500/40 text-rose-400 font-bold'
+                : 'bg-slate-900/40 border-slate-900 text-slate-400 hover:text-white hover:border-slate-800'
+            }`}
+            title="Toggle High Priority Only (Alt+P)"
+          >
+            <Icons.AlertOctagon className="h-3.5 w-3.5" />
+            <span className="text-[10px]">Priority</span>
+          </button>
 
-                  <div className="flex items-center justify-between border-t border-slate-800/60 pt-2 text-[10px]">
-                    <div className="flex items-center space-x-1 text-slate-400">
-                      {getChannelIcon(inc.source)}
-                      <span className="font-mono">{inc.appName}</span>
+          <button
+            onClick={() => {
+              setBulkMode(!bulkMode);
+              setSelectedIncidentIds([]);
+            }}
+            className={`flex-1 flex items-center justify-center space-x-1.5 rounded-lg py-1.5 px-2 border transition-all cursor-pointer ${
+              bulkMode
+                ? 'bg-indigo-600/20 border-indigo-500/50 text-white font-bold'
+                : 'bg-slate-900/40 border-slate-900 text-slate-400 hover:text-white hover:border-slate-800'
+            }`}
+            title="Toggle Bulk Action Mode"
+          >
+            <Icons.CheckSquare className="h-3.5 w-3.5" />
+            <span className="text-[10px]">Bulk</span>
+          </button>
+
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent('create-new-ticket'))}
+            className="rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white p-1.5 transition-all cursor-pointer border border-indigo-500/30"
+            title="Create New Blank Ticket (Alt+N)"
+          >
+            <Icons.Plus className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-2.5 overflow-y-auto pr-1">
+          {incidents
+            .filter((inc) => {
+              if (priorityOnly) {
+                return inc.severity === 'CRITICAL' || inc.severity === 'HIGH';
+              }
+              return true;
+            })
+            .map((inc) => {
+              const isSelected = inc.id === selectedIncident.id;
+              const isSolved = inc.status === 'SOLVED';
+              const isSelectedInBulk = selectedIncidentIds.includes(inc.id);
+
+              return (
+                <div
+                  key={inc.id}
+                  onClick={() => {
+                    if (bulkMode) {
+                      setSelectedIncidentIds(prev =>
+                        prev.includes(inc.id)
+                          ? prev.filter(id => id !== inc.id)
+                          : [...prev, inc.id]
+                      );
+                    } else {
+                      setSelectedIncident(inc);
+                      setDrawerIncidentId(inc.id);
+                    }
+                  }}
+                  className={`w-full flex items-center rounded-xl p-3 border.5 text-left transition-all relative overflow-hidden cursor-pointer ${
+                    isSelected && !bulkMode
+                      ? 'bg-slate-950/80 border-indigo-500/80 shadow-lg shadow-indigo-500/5 scale-[1.01]' 
+                      : isSelectedInBulk && bulkMode
+                        ? 'bg-indigo-950/30 border-indigo-500/50 shadow-lg'
+                        : 'bg-slate-900/30 border-slate-800/60 hover:bg-slate-900/60 hover:border-slate-800/80'
+                  }`}
+                >
+                  {/* Active SLA countdown color strip */}
+                  <div className={`absolute top-0 left-0 bottom-0 w-1.5 ${
+                    isSolved ? 'bg-emerald-500' : inc.severity === 'CRITICAL' ? 'bg-rose-500 animate-pulse' : 'bg-amber-500'
+                  }`} />
+
+                  {/* Bulk Select Checkbox */}
+                  {bulkMode && (
+                    <div className="pl-1.5 mr-2 shrink-0 flex items-center justify-center">
+                      <div className={`h-4 w-4 rounded border flex items-center justify-center transition-all ${
+                        isSelectedInBulk
+                          ? 'bg-indigo-600 border-indigo-500 text-white'
+                          : 'border-slate-700 bg-slate-950/80 hover:border-slate-500'
+                      }`}>
+                        {isSelectedInBulk && <Icons.Check className="h-3 w-3 stroke-[3]" />}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="pl-1.5 space-y-2 w-full flex-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-[9px] text-slate-500 font-semibold">{inc.id}</span>
+                      <span className={`rounded-full px-2 py-0.5 font-mono text-[9px] font-bold ${getSeverityBadge(inc.severity)}`}>
+                        {inc.severity}
+                      </span>
                     </div>
                     
-                    {/* SLA countdown timer */}
-                    <div className={`font-mono font-semibold ${
-                      isSolved 
-                        ? 'text-emerald-400' 
-                        : inc.slaRemainingSecs < 300 
-                          ? 'text-rose-400 animate-pulse' 
-                          : 'text-amber-400'
-                    }`}>
-                      {isSolved ? (
-                        <span className="flex items-center space-x-1">
-                          <Icons.Check className="h-3.5 w-3.5" />
-                          <span>CSAT {inc.csatScore}%</span>
-                        </span>
-                      ) : (
-                        <span>{formatSlaTime(inc.slaRemainingSecs)}</span>
-                      )}
+                    <div>
+                      <h4 className="font-bold text-white text-xs leading-snug line-clamp-2">{inc.title}</h4>
+                      <p className="text-[10px] text-indigo-400 font-medium mt-1 uppercase tracking-wider text-[9px]">{getTenantName(inc.tenantId)}</p>
+                    </div>
+
+                    <div className="flex items-center justify-between border-t border-slate-800/40 pt-2 text-[10px]">
+                      <div className="flex items-center space-x-1 text-slate-400 font-medium">
+                        {getChannelIcon(inc.source)}
+                        <span className="font-mono text-[9.5px]">{inc.appName}</span>
+                      </div>
+                      
+                      {/* SLA countdown timer */}
+                      <div className={`font-mono font-bold text-[9.5px] ${
+                        isSolved 
+                          ? 'text-emerald-400' 
+                          : inc.slaRemainingSecs < 300 
+                            ? 'text-rose-400 animate-pulse' 
+                            : 'text-amber-400'
+                      }`}>
+                        {isSolved ? (
+                          <span className="flex items-center space-x-1">
+                            <Icons.Check className="h-3 w-3" />
+                            <span>CSAT {inc.csatScore}%</span>
+                          </span>
+                        ) : (
+                          <span>{formatSlaTime(inc.slaRemainingSecs)}</span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </button>
-            );
-          })}
+              );
+            })}
         </div>
       </div>
 
       {/* 2. DYNAMIC WORKSPACE (Tabs + Telemetry Core Middle) */}
-      <div className="col-span-5 flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-900/40">
+      <div className="col-span-5 flex flex-col overflow-hidden bento-card-premium">
         
         {/* Active Ticket Heading Details banner */}
-        <div className="border-b border-slate-800 bg-slate-950/40 p-4">
+        <div className="border-b border-slate-800/40 bg-slate-950/20 p-4">
           <div className="flex items-start justify-between">
             <div>
-              <div className="flex items-center space-x-2 text-xxs font-mono text-slate-500 mb-1">
-                <span>{selectedIncident.id}</span>
+              <div className="flex items-center space-x-2 text-[9.5px] font-mono text-slate-500 mb-1.5">
+                <span className="font-semibold">{selectedIncident.id}</span>
                 <span>•</span>
-                <span className="text-indigo-400">{getTenantName(selectedIncident.tenantId)}</span>
+                <span className="text-indigo-400 font-bold">{getTenantName(selectedIncident.tenantId)}</span>
                 <span>•</span>
-                <span>{selectedIncident.appName}</span>
+                <span className="font-medium">{selectedIncident.appName}</span>
               </div>
-              <h2 className="font-display font-bold text-sm text-white leading-relaxed">{selectedIncident.title}</h2>
+              <h2 className="font-display font-bold text-sm text-white leading-snug">{selectedIncident.title}</h2>
             </div>
             <div className="flex items-center space-x-2">
               <button
                 onClick={() => setDrawerIncidentId(selectedIncident.id)}
-                className="rounded-md border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 px-2 py-1 font-mono text-xxs font-bold text-indigo-400 flex items-center space-x-1.5 transition-all cursor-pointer"
+                className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 px-2.5 py-1 font-mono text-xxs font-bold text-indigo-400 flex items-center space-x-1.5 transition-all cursor-pointer"
                 title="View Real-Time Log Correlation & Trace Analysis"
               >
                 <Icons.GitMerge className="h-3 w-3" />
                 <span>Correlation Drawer</span>
               </button>
-              <div className={`rounded-md border px-2 py-1 font-mono text-xxs font-bold ${
+              <div className={`rounded-lg border px-2 py-1 font-mono text-xxs font-bold ${
                 selectedIncident.status === 'SOLVED' 
                   ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' 
                   : selectedIncident.status === 'INVESTIGATING'
@@ -497,14 +632,14 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
             </div>
           </div>
           
-          <div className="mt-3 text-slate-300 bg-slate-950/30 border border-slate-800/40 rounded-lg p-2.5 text-xxs leading-relaxed">
-            <span className="font-bold text-slate-400 uppercase tracking-wide mr-1.5">Description:</span>
+          <div className="mt-3.5 text-slate-300 bg-slate-950/40 border border-slate-800/40 rounded-xl p-3 text-xxs leading-relaxed select-text font-sans shadow-inner">
+            <span className="font-bold text-slate-400 uppercase tracking-wider mr-1.5 text-[8.5px]">Description:</span>
             {selectedIncident.description}
           </div>
         </div>
 
         {/* Telemetry Tabs Selector */}
-        <div className="flex items-center space-x-1 border-b border-slate-800 bg-slate-950/20 px-2 pt-2">
+        <div className="flex items-center space-x-1 border-b border-slate-800/40 bg-slate-950/10 px-3 pt-2">
           {[
             { id: 'logs', label: 'Logs Stream', icon: Icons.FileText },
             { id: 'metrics', label: 'Metrics', icon: Icons.TrendingUp },
@@ -518,9 +653,9 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
               <button
                 key={tab.id}
                 onClick={() => setTelemetryTab(tab.id as any)}
-                className={`flex items-center space-x-1.5 px-3 py-2 font-display font-medium text-xxs border-t border-x rounded-t-lg transition-all ${
+                className={`flex items-center space-x-1.5 px-3.5 py-2.5 font-display font-medium text-xxs border-t border-x rounded-t-xl transition-all cursor-pointer ${
                   isTabActive 
-                    ? 'bg-slate-900 border-slate-800 text-indigo-400 font-bold' 
+                    ? 'bg-slate-900/50 border-slate-800/40 text-indigo-400 font-bold' 
                     : 'bg-transparent border-transparent text-slate-400 hover:text-white'
                 }`}
               >
@@ -945,14 +1080,20 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
             </div>
 
             {/* 4. Automated reply composer box */}
-            <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
-              <h4 className="mb-2 font-display font-bold text-xs text-indigo-400 uppercase tracking-wider flex items-center space-x-1.5">
-                <Icons.Mail className="h-4 w-4" />
+            <div className="rounded-xl border border-slate-800/40 bg-slate-900/30 p-4">
+              <h4 className="mb-2.5 font-display font-bold text-xs text-indigo-400 uppercase tracking-wider flex items-center space-x-1.5 text-white">
+                <Icons.Mail className="h-4 w-4 text-indigo-400" />
                 <span>Customer Response Desk</span>
               </h4>
               <p className="text-xxs text-slate-500 mb-2.5 leading-snug">
                 This reply was generated automatically to fit the target client channel:
               </p>
+
+              {responseSuccessMessage && (
+                <div className="mb-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-emerald-400 font-mono text-[10px] leading-relaxed animate-fadeIn">
+                  {responseSuccessMessage}
+                </div>
+              )}
               
               <textarea
                 value={responseDraft}
@@ -964,7 +1105,7 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
               <div className="mt-3 flex space-x-2">
                 <button
                   onClick={handleSendAutomaticReply}
-                  className="flex-1 py-2 bg-indigo-600 rounded-md text-white font-bold transition-colors hover:bg-indigo-500 flex items-center justify-center space-x-1.5 text-xxs"
+                  className="flex-1 py-2 bg-indigo-600 rounded-md text-white font-bold transition-colors hover:bg-indigo-500 flex items-center justify-center space-x-1.5 text-xxs cursor-pointer"
                 >
                   <Icons.Send className="h-3.5 w-3.5" />
                   <span>Send & Close Incident</span>
@@ -1016,6 +1157,15 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
                   onChange={(e) => setApprovalSignature(e.target.value)}
                   className="w-full rounded border border-slate-800 bg-slate-950 p-2 font-mono text-xxs text-emerald-400 outline-none focus:border-indigo-500"
                 />
+                {approvalSignature && (
+                  <div className="mt-2.5 p-3 rounded-lg bg-slate-950 border border-slate-800/40 text-center relative overflow-hidden">
+                    <span className="absolute top-1 left-2 font-mono text-[8px] text-slate-600 tracking-wider">PREVIEW SECURE SIGNATURE</span>
+                    <span className="font-signature text-3xl text-indigo-400 select-none animate-fadeIn block pt-2.5 pb-1">
+                      {approvalSignature}
+                    </span>
+                    <div className="h-[1px] w-3/4 mx-auto bg-indigo-500/20 mt-1" />
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1045,9 +1195,91 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
       {/* Slide-over telemetry drawer */}
       <IncidentDetailsDrawer
         incidentId={drawerIncidentId}
+        incident={incidents.find(i => i.id === drawerIncidentId)}
         onClose={() => setDrawerIncidentId(null)}
         onAddAuditLog={onAddAuditLog}
       />
+
+      {/* FLOATING BULK BATCH ACTIONS BAR */}
+      <AnimatePresence>
+        {bulkMode && selectedIncidentIds.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 40, scale: 0.95 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center space-x-4 rounded-xl border border-indigo-500/40 bg-slate-950/95 px-5 py-3.5 shadow-2xl shadow-black/80 backdrop-blur-xl"
+          >
+            <div className="flex items-center space-x-2 text-xxs font-mono text-indigo-400">
+              <Icons.Inbox className="h-4 w-4 animate-bounce" />
+              <span className="font-bold uppercase tracking-wider">{selectedIncidentIds.length} SELECTED</span>
+            </div>
+
+            <div className="h-5 w-[1px] bg-slate-800" />
+
+            <div className="flex items-center space-x-2.5">
+              {/* Assign to Me Button */}
+              <button
+                onClick={() => {
+                  setIncidents(prev => prev.map(inc => 
+                    selectedIncidentIds.includes(inc.id)
+                      ? { ...inc, assignee: 'Eshan Barua' }
+                      : inc
+                  ));
+                  onAddAuditLog(
+                    "Eshan Barua (CTO)", 
+                    "Batch Assign Tickets", 
+                    "Operational Workspace", 
+                    "SUCCESS", 
+                    `Assigned selected incidents (${selectedIncidentIds.join(', ')}) to operator: Eshan Barua`
+                  );
+                  window.dispatchEvent(new CustomEvent('show-toast', { 
+                    detail: { message: `Successfully assigned ${selectedIncidentIds.length} tickets to you.` } 
+                  }));
+                  setSelectedIncidentIds([]);
+                }}
+                className="flex items-center space-x-1.5 rounded-lg bg-indigo-600/10 border border-indigo-500/20 hover:bg-indigo-600/25 px-3 py-1.5 text-xxs font-bold text-indigo-400 cursor-pointer transition-all"
+              >
+                <Icons.UserPlus className="h-3.5 w-3.5" />
+                <span>Assign to Me</span>
+              </button>
+
+              {/* Resolve All Button */}
+              <button
+                onClick={() => {
+                  setIncidents(prev => prev.map(inc => 
+                    selectedIncidentIds.includes(inc.id)
+                      ? { ...inc, status: 'SOLVED', csatScore: 94 }
+                      : inc
+                  ));
+                  onAddAuditLog(
+                    "Eshan Barua (CTO)", 
+                    "Batch Resolve Tickets", 
+                    "Operational Workspace", 
+                    "SUCCESS", 
+                    `Resolved selected incidents (${selectedIncidentIds.join(', ')}) via batch resolution execution.`
+                  );
+                  window.dispatchEvent(new CustomEvent('show-toast', { 
+                    detail: { message: `Resolved ${selectedIncidentIds.length} selected tickets successfully.` } 
+                  }));
+                  setSelectedIncidentIds([]);
+                }}
+                className="flex items-center space-x-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xxs font-bold text-white hover:bg-emerald-500 cursor-pointer transition-all shadow-lg shadow-emerald-600/10"
+              >
+                <Icons.CheckCircle className="h-3.5 w-3.5" />
+                <span>Resolve Selected</span>
+              </button>
+
+              {/* Cancel Selection */}
+              <button
+                onClick={() => setSelectedIncidentIds([])}
+                className="rounded-lg border border-slate-800 bg-slate-900/50 hover:bg-slate-800 hover:border-slate-700 px-2.5 py-1.5 text-xxs font-medium text-slate-400 hover:text-white cursor-pointer transition-all"
+              >
+                Cancel
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
     </div>
   );

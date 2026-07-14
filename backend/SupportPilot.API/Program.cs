@@ -136,7 +136,7 @@ if (app.Environment.IsDevelopment())
 app.UseCors("SupportPilotCorsPolicy");
 
 // Custom Tenant Extraction Middleware (extracts Tenant GUID and Role claims)
-app.UseMiddleware<TenantMiddleware>();
+app.UseMiddleware<TenantIsolationMiddleware>();
 
 app.UseAuthentication();
 app.UseAuthorization();

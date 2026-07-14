@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as Icons from 'lucide-react';
+import { Incident } from '../types';
 
 interface IncidentDetailsDrawerProps {
   incidentId: string | null;
+  incident?: Incident;
   onClose: () => void;
   onAddAuditLog: (operator: string, action: string, module: string, status: 'SUCCESS' | 'FAILED' | 'PENDING_APPROVAL', payload: string) => void;
 }
@@ -30,10 +32,43 @@ interface CorrelationData {
   aiCorrelationSummary: string;
 }
 
-export default function IncidentDetailsDrawer({ incidentId, onClose, onAddAuditLog }: IncidentDetailsDrawerProps) {
+export default function IncidentDetailsDrawer({ incidentId, incident, onClose, onAddAuditLog }: IncidentDetailsDrawerProps) {
   const [data, setData] = useState<CorrelationData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const getStageStates = (status?: string): Record<string, 'completed' | 'active' | 'pending'> => {
+    const states: Record<string, 'completed' | 'active' | 'pending'> = {
+      identification: 'completed',
+      triage: 'pending',
+      remediation: 'pending',
+      resolution: 'pending',
+    };
+
+    if (!status) return states;
+
+    if (status === 'OPEN') {
+      states.triage = 'active';
+    } else if (status === 'INVESTIGATING' || status === 'ESCALATED') {
+      states.triage = 'completed';
+      states.remediation = 'active';
+    } else if (status === 'SOLVED') {
+      states.triage = 'completed';
+      states.remediation = 'completed';
+      states.resolution = 'completed';
+    }
+
+    return states;
+  };
+
+  const stageStates = getStageStates(incident?.status);
+
+  const stages = [
+    { id: 'identification', label: 'Identification', icon: Icons.AlertCircle, sub: 'Logged' },
+    { id: 'triage', label: 'Triage', icon: Icons.Search, sub: 'Assigned' },
+    { id: 'remediation', label: 'Remediation', icon: Icons.Activity, sub: 'Mitigating' },
+    { id: 'resolution', label: 'Resolution', icon: Icons.CheckCircle2, sub: 'Resolved' },
+  ];
 
   useEffect(() => {
     if (!incidentId) return;
@@ -127,6 +162,72 @@ export default function IncidentDetailsDrawer({ incidentId, onClose, onAddAuditL
               {!isLoading && !error && data && (
                 <div className="space-y-5 select-text">
                   
+                  {/* Visual Step-by-Step Incident Progress Tracker */}
+                  <div className="rounded-xl border border-slate-900 bg-slate-900/25 p-4.5 space-y-3.5 select-none">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400 font-display font-medium uppercase tracking-wider text-xxs">Incident Lifecycle Stage</span>
+                      <span className="font-mono text-[10px] text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-full font-bold">
+                        {incident?.status || 'UNKNOWN'}
+                      </span>
+                    </div>
+
+                    <div className="relative flex items-center justify-between pt-2">
+                      {/* Connector Line Background */}
+                      <div className="absolute left-4 right-4 top-[21px] h-[2px] bg-slate-800" />
+                      {/* Active Connector Fill */}
+                      <div 
+                        className="absolute left-4 top-[21px] h-[2px] bg-gradient-to-r from-emerald-500 via-indigo-500 to-indigo-600 transition-all duration-500" 
+                        style={{ 
+                          width: incident?.status === 'SOLVED' 
+                            ? 'calc(100% - 32px)' 
+                            : incident?.status === 'INVESTIGATING' || incident?.status === 'ESCALATED'
+                              ? '50%'
+                              : '16.66%'
+                        }}
+                      />
+
+                      {stages.map((stg) => {
+                        const state = stageStates[stg.id];
+                        const IconComponent = stg.icon;
+                        
+                        return (
+                          <div key={stg.id} className="flex flex-col items-center space-y-1.5 relative z-10 flex-1">
+                            {/* Circle Indicator */}
+                            <div className={`h-[28px] w-[28px] rounded-full border flex items-center justify-center transition-all duration-300 ${
+                              state === 'completed'
+                                ? 'bg-emerald-500/10 border-emerald-500 text-emerald-400 shadow-md shadow-emerald-500/10'
+                                : state === 'active'
+                                  ? 'bg-indigo-600/20 border-indigo-500 text-indigo-400 animate-pulse shadow-md shadow-indigo-500/25 scale-[1.05]'
+                                  : 'bg-slate-950 border-slate-800 text-slate-500'
+                            }`}>
+                              {state === 'completed' ? (
+                                <Icons.Check className="h-4 w-4 stroke-[2.5]" />
+                              ) : (
+                                <IconComponent className="h-3.5 w-3.5" />
+                              )}
+                            </div>
+
+                            {/* Text labels */}
+                            <div className="text-center">
+                              <p className={`font-display text-[10px] font-bold ${
+                                state === 'completed'
+                                  ? 'text-slate-200'
+                                  : state === 'active'
+                                    ? 'text-indigo-400 font-extrabold'
+                                    : 'text-slate-500'
+                              }`}>
+                                {stg.label}
+                              </p>
+                              <p className="text-[8px] text-slate-500 font-mono leading-none mt-0.5">
+                                {stg.sub}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   {/* System Metadata bento boxes */}
                   <div className="grid grid-cols-2 gap-3 font-mono text-[10px]">
                     <div className="rounded-lg border border-slate-900 bg-slate-900/30 p-2.5">

@@ -1,7 +1,9 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using SupportPilot.Application.Common.Interfaces;
+using SupportPilot.Application.Common.Security;
 using SupportPilot.Domain.Entities;
 
 namespace SupportPilot.Infrastructure.Persistence;
@@ -12,8 +14,13 @@ namespace SupportPilot.Infrastructure.Persistence;
 /// </summary>
 public class ApplicationDbContext : DbContext, IApplicationDbContext
 {
-    public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : base(options)
+    private readonly ITenantContext? _tenantContext;
+
+    public ApplicationDbContext(
+        DbContextOptions<ApplicationDbContext> options,
+        ITenantContext? tenantContext = null) : base(options)
     {
+        _tenantContext = tenantContext;
     }
 
     public DbSet<Organization> Organizations => Set<Organization>();
@@ -48,6 +55,8 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
                 .WithMany(o => o.Users)
                 .HasForeignKey(e => e.OrganizationId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasQueryFilter(e => _tenantContext == null || !_tenantContext.TenantId.HasValue || e.OrganizationId == _tenantContext.TenantId.Value);
         });
 
         // 3. Incident Configuration with Multi-tenant indexing
@@ -76,6 +85,8 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.ApiCallsJson).HasColumnType("jsonb");
             entity.Property(e => e.QueueStateJson).HasColumnType("jsonb");
             entity.Property(e => e.AiAnalysisJson).HasColumnType("jsonb");
+
+            entity.HasQueryFilter(e => _tenantContext == null || !_tenantContext.TenantId.HasValue || e.OrganizationId == _tenantContext.TenantId.Value);
         });
 
         // 4. Audit Log Configuration
@@ -95,11 +106,30 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
                 .OnDelete(DeleteBehavior.Cascade);
 
             entity.Property(e => e.Payload).HasColumnType("jsonb");
+
+            entity.HasQueryFilter(e => _tenantContext == null || !_tenantContext.TenantId.HasValue || e.OrganizationId == _tenantContext.TenantId.Value);
         });
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        var currentUser = _tenantContext?.UserEmail ?? "System";
+        var now = DateTime.UtcNow;
+
+        foreach (var entry in ChangeTracker.Entries<IAuditable>())
+        {
+            if (entry.State == EntityState.Added)
+            {
+                entry.Entity.CreatedBy = currentUser;
+                entry.Entity.CreatedAt = now;
+            }
+            else if (entry.State == EntityState.Modified)
+            {
+                entry.Entity.ModifiedBy = currentUser;
+                entry.Entity.ModifiedAt = now;
+            }
+        }
+
         return base.SaveChangesAsync(cancellationToken);
     }
 }
