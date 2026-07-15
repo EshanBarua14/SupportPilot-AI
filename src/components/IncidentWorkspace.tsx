@@ -4,6 +4,68 @@ import { InitialIncidents, SeedTenants } from '../data/simulation';
 import * as Icons from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import IncidentDetailsDrawer from './IncidentDetailsDrawer';
+import { jsPDF } from 'jspdf';
+
+const calculateIncidentForecast = () => {
+  // Historical incidents count per cycle: Cycle 1=4, Cycle 2=6, Cycle 3=3, Cycle 4=8, Cycle 5=5, Cycle 6=11
+  const history = [
+    { cycle: 1, count: 4, label: "06:00" },
+    { cycle: 2, count: 6, label: "12:00" },
+    { cycle: 3, count: 3, label: "18:00" },
+    { cycle: 4, count: 8, label: "00:00" },
+    { cycle: 5, count: 5, label: "06:00" },
+    { cycle: 6, count: 11, label: "12:00" }
+  ];
+
+  // Simple Linear Regression: y = mx + b
+  const n = history.length;
+  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+  for (let i = 0; i < n; i++) {
+    sumX += history[i].cycle;
+    sumY += history[i].count;
+    sumXY += history[i].cycle * history[i].count;
+    sumXX += history[i].cycle * history[i].cycle;
+  }
+
+  const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+  const intercept = (sumY - slope * sumX) / n;
+
+  // Project next 3 cycles (e.g., next 18 hours)
+  const projections = [];
+  for (let i = 1; i <= 3; i++) {
+    const projectedCycle = n + i;
+    const projectedCount = Math.max(0, parseFloat((slope * projectedCycle + intercept).toFixed(1)));
+    
+    let timeLabel = "";
+    if (i === 1) timeLabel = "+6 Hours";
+    else if (i === 2) timeLabel = "+12 Hours";
+    else if (i === 3) timeLabel = "+18 Hours";
+
+    // Capacity Bottleneck / Risk Level assessment
+    let riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' = 'LOW';
+    let bottleneckSource = 'None';
+    if (projectedCount > 13) {
+      riskLevel = 'CRITICAL';
+      bottleneckSource = 'Kafka Partition lag / Network Socket Exhaustion';
+    } else if (projectedCount > 9) {
+      riskLevel = 'HIGH';
+      bottleneckSource = 'PostgreSQL Connection Exhaustion / PG Pool Starvation';
+    } else if (projectedCount > 6) {
+      riskLevel = 'MEDIUM';
+      bottleneckSource = 'Redis eviction spikes';
+    }
+
+    projections.push({
+      cycle: projectedCycle,
+      projectedCount,
+      timeLabel,
+      riskLevel,
+      bottleneckSource
+    });
+  }
+
+  return { history, slope, projections };
+};
 
 interface IncidentWorkspaceProps {
   modelSelection: string;
@@ -375,6 +437,224 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
     setTimeout(() => setResponseSuccessMessage(null), 5000);
   };
 
+  // Download Report as PDF using jsPDF
+  const handleDownloadPDFReport = () => {
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4'
+    });
+
+    // Color definitions
+    const PRIMARY = [99, 102, 241]; // Indigo
+    const SECONDARY = [15, 23, 42]; // Slate 900
+    const TEXT_DARK = [30, 41, 59]; // Slate 800
+    const TEXT_LIGHT = [100, 116, 139]; // Slate 500
+    const ACCENT_RED = [239, 68, 68]; // Red
+
+    // Background header band
+    doc.setFillColor(SECONDARY[0], SECONDARY[1], SECONDARY[2]);
+    doc.rect(0, 0, 210, 38, 'F');
+
+    // Header Title
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("SUPPORTPILOT OPERATIONAL DEBRIEF", 15, 16);
+
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(165, 180, 252); // Indigo-200ish
+    doc.text("AUTONOMOUS ROOT CAUSE INVESTIGATION REPORT", 15, 22);
+
+    // Header metadata
+    doc.setTextColor(203, 213, 225);
+    doc.setFontSize(8);
+    const dateStr = new Date().toLocaleString();
+    doc.text(`Generated: ${dateStr}`, 15, 30);
+    doc.text(`Compliance: CTO Handshake Approved`, 130, 30);
+
+    // Section 1: Incident Specifications
+    doc.setTextColor(PRIMARY[0], PRIMARY[1], PRIMARY[2]);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("1. INCIDENT SPECIFICATIONS", 15, 48);
+    
+    // Draw line
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.5);
+    doc.line(15, 50, 195, 50);
+
+    // Specifications box
+    doc.setFillColor(248, 250, 252);
+    doc.rect(15, 53, 180, 42, 'F');
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.2);
+    doc.rect(15, 53, 180, 42, 'S');
+
+    doc.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2]);
+    doc.setFontSize(9);
+    
+    doc.setFont("Helvetica", "bold");
+    doc.text("Incident ID:", 20, 60);
+    doc.setFont("Helvetica", "normal");
+    doc.text(selectedIncident.id, 45, 60);
+
+    doc.setFont("Helvetica", "bold");
+    doc.text("Severity / Priority:", 115, 60);
+    doc.setFont("Helvetica", "bold");
+    doc.setTextColor(ACCENT_RED[0], ACCENT_RED[1], ACCENT_RED[2]);
+    doc.text(selectedIncident.severity, 150, 60);
+    doc.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2]);
+
+    doc.setFont("Helvetica", "bold");
+    doc.text("Tenant context:", 20, 67);
+    doc.setFont("Helvetica", "normal");
+    doc.text(getTenantName(selectedIncident.tenantId), 45, 67);
+
+    doc.setFont("Helvetica", "bold");
+    doc.text("Target system:", 115, 67);
+    doc.setFont("Helvetica", "normal");
+    doc.text(selectedIncident.appName, 150, 67);
+
+    doc.setFont("Helvetica", "bold");
+    doc.text("Headline title:", 20, 74);
+    doc.setFont("Helvetica", "normal");
+    doc.text(selectedIncident.title.length > 70 ? selectedIncident.title.substring(0, 67) + "..." : selectedIncident.title, 45, 74);
+
+    doc.setFont("Helvetica", "bold");
+    doc.text("State status:", 115, 74);
+    doc.setFont("Helvetica", "bold");
+    doc.text(selectedIncident.status, 150, 74);
+
+    doc.setFont("Helvetica", "bold");
+    doc.setTextColor(TEXT_LIGHT[0], TEXT_LIGHT[1], TEXT_LIGHT[2]);
+    doc.text("Description summary:", 20, 81);
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2]);
+    const splitDesc = doc.splitTextToSize(selectedIncident.description, 170);
+    doc.text(splitDesc, 20, 85);
+
+    // Section 2: AI Diagnostic Summary
+    doc.setTextColor(PRIMARY[0], PRIMARY[1], PRIMARY[2]);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("2. AUTONOMOUS CORE DIAGNOSTIC FINDINGS", 15, 104);
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.5);
+    doc.line(15, 106, 195, 106);
+
+    if (selectedIncident.analysis) {
+      doc.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2]);
+      doc.setFontSize(9);
+
+      doc.setFont("Helvetica", "bold");
+      doc.text("AI Diagnosis confidence rating:", 20, 112);
+      doc.setFont("Helvetica", "bold");
+      doc.setTextColor(16, 185, 129); // Emerald
+      doc.text(`${selectedIncident.analysis.confidenceScore}% (High-Fidelity Handshake)`, 70, 112);
+      doc.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2]);
+
+      doc.setFont("Helvetica", "bold");
+      doc.text("Root Cause Diagnosis:", 20, 120);
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(8.5);
+      const splitRC = doc.splitTextToSize(selectedIncident.analysis.rootCause, 170);
+      doc.text(splitRC, 20, 124);
+
+      // Remediation script box
+      const rcHeight = splitRC.length * 4;
+      const remY = 126 + rcHeight;
+
+      doc.setFontSize(9);
+      doc.setFont("Helvetica", "bold");
+      doc.text("Recommended Remediation Script (Safe Mode API):", 20, remY);
+      
+      doc.setFillColor(241, 245, 249);
+      doc.rect(20, remY + 3, 170, 15, 'F');
+      doc.setDrawColor(203, 213, 225);
+      doc.rect(20, remY + 3, 170, 15, 'S');
+
+      doc.setFont("Courier", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(5, 150, 105); // Green-600
+      doc.text(selectedIncident.analysis.suggestedFix, 24, remY + 12);
+      doc.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2]);
+      doc.setFont("Helvetica", "normal");
+
+      // Cascading Risk
+      const riskY = remY + 25;
+      doc.setFontSize(9);
+      doc.setFont("Helvetica", "bold");
+      doc.text("Cascading Risk & SLA Impact Prediction:", 20, riskY);
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(8.5);
+      const splitRisk = doc.splitTextToSize(selectedIncident.analysis.riskPrediction, 170);
+      doc.text(splitRisk, 20, riskY + 4);
+    } else {
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(TEXT_LIGHT[0], TEXT_LIGHT[1], TEXT_LIGHT[2]);
+      doc.text("No diagnostic findings currently analyzed. Run AI correlation investigation first.", 20, 112);
+    }
+
+    // Section 3: Timeline & Audit Ledger
+    doc.setTextColor(PRIMARY[0], PRIMARY[1], PRIMARY[2]);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("3. OUTAGE CHRONOLOGY TIMELINE", 15, 192);
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.5);
+    doc.line(15, 194, 195, 194);
+
+    doc.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2]);
+    doc.setFontSize(8.5);
+    
+    let timelineY = 200;
+    const timelineData = selectedIncident.analysis?.timeline || [];
+    
+    if (timelineData.length > 0) {
+      timelineData.forEach((evt, i) => {
+        if (timelineY < 275) {
+          doc.setFont("Helvetica", "bold");
+          const timeLabel = evt.timestamp ? evt.timestamp.slice(11, 19) : "00:00:00";
+          doc.text(`[${timeLabel}] ${evt.title}`, 20, timelineY);
+          
+          doc.setFont("Helvetica", "normal");
+          const splitEvtDesc = doc.splitTextToSize(evt.description, 160);
+          doc.text(splitEvtDesc, 25, timelineY + 4.5);
+          
+          timelineY += 7.5 + (splitEvtDesc.length * 3.5);
+        }
+      });
+    } else {
+      doc.setFont("Helvetica", "normal");
+      doc.text("Standard telemetry tracking started. Timeline entries will sync upon incident analysis.", 20, 200);
+    }
+
+    // Footer signature block at bottom
+    doc.setFillColor(SECONDARY[0], SECONDARY[1], SECONDARY[2]);
+    doc.rect(0, 282, 210, 15, 'F');
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(255, 255, 255);
+    doc.text("SUPPORTPILOT INTEGRATED COGNITIVE SHIELD", 15, 291);
+    doc.setFont("Helvetica", "normal");
+    doc.text("Page 1 of 1", 180, 291);
+
+    // Save PDF
+    doc.save(`SupportPilot_Debrief_Incident_${selectedIncident.id}.pdf`);
+
+    onAddAuditLog(
+      "Eshan Barua (CTO)",
+      "Document Generated",
+      "Compliance Engine",
+      "SUCCESS",
+      `Compiled visual operational debrief report PDF for incident: ${selectedIncident.id}.`
+    );
+  };
+
   // Helper to render high-fidelity custom line area metric graph in inline SVG
   const renderSvgMetricChart = (points: Array<{ time: string, value: number }>, label: string, unit: string) => {
     if (!points || points.length === 0) return null;
@@ -452,10 +732,22 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
     <div className="grid h-[calc(100vh-130px)] grid-cols-12 gap-4 text-xs font-sans">
       {/* 1. COMPREHENSIVE INCIDENT CASE QUEUE (Sidebar Left) */}
       <div className="col-span-3 flex flex-col overflow-hidden bento-card-premium p-4">
-        <h3 className="mb-3 font-display font-bold text-sm text-indigo-400 uppercase tracking-wider flex items-center space-x-2 text-white">
-          <Icons.ShieldAlert className="h-4.5 w-4.5 text-indigo-400" />
-          <span>Active Operations Queue</span>
-        </h3>
+        <div className="flex items-center justify-between mb-3 border-b border-slate-900 pb-1">
+          <h3 className="font-display font-bold text-sm text-indigo-400 uppercase tracking-wider flex items-center space-x-2 text-white">
+            <Icons.ShieldAlert className="h-4.5 w-4.5 text-indigo-400" />
+            <span>Active Operations Queue</span>
+          </h3>
+          
+          {/* Tooltip */}
+          <div className="relative group/opsqueue shrink-0">
+            <Icons.HelpCircle className="h-3.5 w-3.5 text-slate-500 hover:text-white transition-colors cursor-pointer" />
+            <div className="absolute right-0 top-full mt-1.5 hidden group-hover/opsqueue:block z-50 w-52 rounded-xl border border-slate-800 bg-slate-950 p-2.5 text-[9px] font-mono text-slate-400 shadow-xl leading-normal pointer-events-none normal-case font-normal">
+              <span className="font-bold text-indigo-400 uppercase tracking-wider text-[8px] block mb-1">Queue & Severity Calculation</span>
+              Tickets are routed according to tenant tier (e.g., Enterprise/Elite), active exception rates, and Jaeger trace latency degradation.
+              <div className="absolute bottom-full right-1 border-4 border-transparent border-b-slate-800" />
+            </div>
+          </div>
+        </div>
 
         {/* Professional Ops Toolbar */}
         <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-slate-800/40 gap-1.5">
@@ -908,6 +1200,191 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
       {/* 3. AI INVESTIGATION BOARD (Telemetry Analysis Panel Right) */}
       <div className="col-span-4 flex flex-col overflow-y-auto space-y-4">
         
+        {/* Incident Forecasting Module */}
+        <div className="rounded-xl border border-slate-900 bg-slate-950 p-4 space-y-3.5">
+          <div className="flex items-center justify-between border-b border-slate-900 pb-2">
+            <h4 className="font-display font-semibold text-xs text-indigo-400 uppercase tracking-wider flex items-center space-x-1.5 text-white">
+              <Icons.LineChart className="h-4 w-4 text-indigo-400 animate-pulse" />
+              <span>Predictive Incident Forecasting</span>
+            </h4>
+            
+            {/* Tooltip Icon & Popover */}
+            <div className="relative group/forecasting">
+              <Icons.HelpCircle className="h-3.5 w-3.5 text-slate-500 hover:text-white transition-colors cursor-pointer" />
+              <div className="absolute right-0 top-full mt-2 hidden group-hover/forecasting:block z-50 w-52 rounded-xl border border-slate-800 bg-slate-950 p-3 text-[9px] font-mono text-slate-400 shadow-xl leading-normal pointer-events-none">
+                <div className="font-bold text-white mb-1 uppercase tracking-wider text-[8px] flex items-center space-x-1">
+                  <Icons.Cpu className="h-2.5 w-2.5 text-indigo-400" />
+                  <span>Least-Squares Linear Model</span>
+                </div>
+                <p className="text-slate-400 font-sans leading-relaxed">
+                  Applies standard linear regression coefficients (y = mx + b) over historical SLA exception logs and database lock telemetry to project container OOM bottlenecks.
+                </p>
+                <div className="absolute bottom-full right-1 border-4 border-transparent border-b-slate-800" />
+              </div>
+            </div>
+          </div>
+
+          <div className="text-[10px] text-slate-400 leading-relaxed">
+            AI-driven linear regression analyzing the last 6 operational logging cycles to predict capacity bottlenecks and outages:
+          </div>
+
+          {/* Forecasting Trend Graph (Rendered natively via SVG for safety and exact design control) */}
+          {(() => {
+            const forecast = calculateIncidentForecast();
+            const points = [...forecast.history.map(h => h.count), ...forecast.projections.map(p => p.projectedCount)];
+            const maxVal = Math.max(...points, 12);
+            
+            const width = 280;
+            const height = 90;
+            const padding = 15;
+            const chartWidth = width - padding * 2;
+            const chartHeight = height - padding * 2;
+            const stepX = chartWidth / (points.length - 1);
+
+            return (
+              <div className="relative bg-slate-950/80 p-2 rounded-lg border border-slate-900/60 font-mono text-[8px]">
+                <div className="absolute top-1 right-2 flex space-x-2 text-[7px] text-slate-500 uppercase">
+                  <span className="flex items-center space-x-1">
+                    <span className="h-1.5 w-1.5 bg-slate-600 rounded-full" />
+                    <span>History</span>
+                  </span>
+                  <span className="flex items-center space-x-1">
+                    <span className="h-1.5 w-1.5 bg-indigo-500 rounded-full animate-pulse" />
+                    <span>Forecast</span>
+                  </span>
+                </div>
+                
+                <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} className="overflow-visible">
+                  {/* Subtle horizontal grid lines */}
+                  {[0.25, 0.5, 0.75, 1].map((r, i) => (
+                    <line
+                      key={i}
+                      x1={padding}
+                      y1={padding + chartHeight * (1 - r)}
+                      x2={width - padding}
+                      y2={padding + chartHeight * (1 - r)}
+                      stroke="rgba(255,255,255,0.03)"
+                      strokeWidth="1"
+                    />
+                  ))}
+
+                  {/* Draw History Path (first 6 points) */}
+                  <path
+                    d={forecast.history.map((pt, i) => {
+                      const x = padding + i * stepX;
+                      const y = padding + chartHeight * (1 - pt.count / maxVal);
+                      return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+                    }).join(' ')}
+                    fill="none"
+                    stroke="#475569"
+                    strokeWidth="1.5"
+                  />
+
+                  {/* Draw Forecast Path (next 3 points) */}
+                  <path
+                    d={[forecast.history[forecast.history.length - 1], ...forecast.projections].map((pt, i) => {
+                      const idx = forecast.history.length - 1 + i;
+                      const x = padding + idx * stepX;
+                      const val = 'count' in pt ? pt.count : pt.projectedCount;
+                      const y = padding + chartHeight * (1 - val / maxVal);
+                      return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+                    }).join(' ')}
+                    fill="none"
+                    stroke="#6366f1"
+                    strokeWidth="1.5"
+                    strokeDasharray="3,3"
+                  />
+
+                  {/* Draw points */}
+                  {forecast.history.map((pt, i) => {
+                    const x = padding + i * stepX;
+                    const y = padding + chartHeight * (1 - pt.count / maxVal);
+                    return (
+                      <g key={i}>
+                        <circle cx={x} cy={y} r="3" fill="#0f172a" stroke="#64748b" strokeWidth="1" />
+                        {i % 2 === 0 && (
+                          <text x={x} y={y - 6} fill="#64748b" textAnchor="middle" fontSize="6">{pt.count}</text>
+                        )}
+                      </g>
+                    );
+                  })}
+
+                  {forecast.projections.map((pt, i) => {
+                    const idx = forecast.history.length + i;
+                    const x = padding + idx * stepX;
+                    const y = padding + chartHeight * (1 - pt.projectedCount / maxVal);
+                    return (
+                      <g key={i}>
+                        <circle cx={x} cy={y} r="3" fill="#0f172a" stroke="#818cf8" strokeWidth="1" />
+                        <text x={x} y={y - 6} fill="#818cf8" textAnchor="middle" fontSize="6" fontWeight="bold">{pt.projectedCount}</text>
+                      </g>
+                    );
+                  })}
+                </svg>
+
+                {/* Grid labels */}
+                <div className="flex justify-between px-2 pt-1.5 text-slate-500 text-[7px] uppercase font-bold border-t border-slate-900">
+                  <span>Cycle Start (06:00)</span>
+                  <span className="text-indigo-400 font-black animate-pulse">Projection Horizon (+18h)</span>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Forecast Predictions / Bottlenecks Alert List */}
+          <div className="space-y-2 font-mono text-[9px]">
+            {calculateIncidentForecast().projections.map((proj, i) => {
+              const isHigh = proj.riskLevel === 'HIGH' || proj.riskLevel === 'CRITICAL';
+              return (
+                <div
+                  key={i}
+                  className={`p-2 rounded-lg border flex flex-col space-y-1 ${
+                    proj.riskLevel === 'CRITICAL'
+                      ? 'bg-rose-500/10 border-rose-500/20 text-rose-300'
+                      : proj.riskLevel === 'HIGH'
+                        ? 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+                        : 'bg-slate-900/40 border-slate-900 text-slate-400'
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-bold">
+                    <span className="text-white text-[9.5px] uppercase">{proj.timeLabel}</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[7.5px] ${
+                      proj.riskLevel === 'CRITICAL'
+                        ? 'bg-rose-500/20 text-rose-400'
+                        : proj.riskLevel === 'HIGH'
+                          ? 'bg-amber-500/20 text-amber-400'
+                          : 'bg-slate-800 text-slate-400'
+                    }`}>
+                      {proj.riskLevel} RISK
+                    </span>
+                  </div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1">
+                      <p className="leading-normal">
+                        Predicted Outages: <strong className="text-white font-black">{proj.projectedCount}</strong> events/hr
+                      </p>
+                      <p className="text-[8px] text-slate-500 leading-normal mt-0.5">
+                        Bottleneck: {proj.bottleneckSource}
+                      </p>
+                    </div>
+                    {isHigh && (
+                      <Icons.AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-400 animate-pulse mt-0.5" />
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-900 text-[8.5px] text-slate-500 leading-normal font-mono flex items-start space-x-1.5">
+            <Icons.Sparkles className="h-3.5 w-3.5 text-indigo-400 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold text-slate-300 uppercase block mb-0.5">Recommended Actions:</span>
+              Pre-emptively expand <span className="text-white font-semibold">PostgreSQL pool limits</span> and trigger Garbage Collection on the billing pod replication controller to mitigate the forecasted bottleneck.
+            </div>
+          </div>
+        </div>
+
         {/* Main Investigation Action card */}
         {!selectedIncident.analysis ? (
           <div className="rounded-xl border border-dashed border-indigo-500/30 bg-indigo-500/5 p-6 text-center space-y-4">
@@ -993,14 +1470,27 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
                   <span>AI Investigation Results</span>
                 </h4>
                 
-                {/* Confidence Score meter */}
-                <div className="flex items-center space-x-1.5">
-                  <span className="text-[10px] text-slate-500 font-mono">Confidence:</span>
-                  <span className={`font-mono font-bold ${
-                    selectedIncident.analysis.confidenceScore > 85 ? 'text-emerald-400' : 'text-amber-400'
-                  }`}>
-                    {selectedIncident.analysis.confidenceScore}%
-                  </span>
+                <div className="flex items-center space-x-2.5">
+                  <button
+                    onClick={handleDownloadPDFReport}
+                    className="rounded bg-indigo-600 hover:bg-indigo-500 hover:text-white px-2 py-0.5 font-mono text-[9px] font-bold text-white flex items-center space-x-1 transition-all cursor-pointer shadow-md shadow-indigo-600/15"
+                    title="Download incident findings as formatted PDF report"
+                  >
+                    <Icons.Download className="h-2.5 w-2.5" />
+                    <span>Download Report PDF</span>
+                  </button>
+
+                  <div className="h-4 w-[1px] bg-slate-800" />
+
+                  {/* Confidence Score meter */}
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-[10px] text-slate-500 font-mono">Confidence:</span>
+                    <span className={`font-mono font-bold ${
+                      selectedIncident.analysis.confidenceScore > 85 ? 'text-emerald-400' : 'text-amber-400'
+                    }`}>
+                      {selectedIncident.analysis.confidenceScore}%
+                    </span>
+                  </div>
                 </div>
               </div>
 

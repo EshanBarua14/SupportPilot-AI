@@ -5,15 +5,61 @@ import * as Icons from 'lucide-react';
 interface ShortcutsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  activeTab?: string;
 }
 
-export default function ShortcutsModal({ isOpen, onClose }: ShortcutsModalProps) {
+export default function ShortcutsModal({ isOpen, onClose, activeTab }: ShortcutsModalProps) {
   // Prevent propagation for inner clicks
   const handleInnerClick = (e: React.MouseEvent) => {
     e.stopPropagation();
   };
 
-  const shortcutGroups = [
+  const getTabSpecificShortcuts = (tab?: string) => {
+    if (!tab) return null;
+    switch (tab) {
+      case 'workspace':
+        return {
+          title: "Active Context: Incident Workspace",
+          icon: Icons.Terminal,
+          shortcuts: [
+            { keys: ["Alt", "P"], desc: "Toggle incident priority filter (High/Critical only)" },
+            { keys: ["Alt", "N"], desc: "Instantiate a new manual incident ticket card" },
+            { keys: ["Alt", "I"], desc: "Refocus active queue and workspace view" },
+          ]
+        };
+      case 'aspnet':
+        return {
+          title: "Active Context: C# ASP.NET Core Engine",
+          icon: Icons.Server,
+          shortcuts: [
+            { keys: ["Alt", "R"], desc: "Broadcast live SignalR diagnostic ping to subagents" },
+            { keys: ["Alt", "W"], desc: "Reset active thread locks and diagnostic counts" },
+          ]
+        };
+      case 'audit':
+        return {
+          title: "Active Context: Audit & Index",
+          icon: Icons.Shield,
+          shortcuts: [
+            { keys: ["Alt", "U"], desc: "Manual secure audit log entry creation" },
+          ]
+        };
+      case 'metrics':
+        return {
+          title: "Active Context: NOC & SLA Dashboard",
+          icon: Icons.Zap,
+          shortcuts: [
+            { keys: ["Alt", "M"], desc: "Trigger SLA metrics database counter synchronization" },
+          ]
+        };
+      default:
+        return null;
+    }
+  };
+
+  const tabGroup = getTabSpecificShortcuts(activeTab);
+
+  const baseShortcutGroups = [
     {
       title: "Navigation & Layout",
       icon: Icons.Navigation,
@@ -46,6 +92,8 @@ export default function ShortcutsModal({ isOpen, onClose }: ShortcutsModalProps)
       ]
     }
   ];
+
+  const shortcutGroups = tabGroup ? [tabGroup, ...baseShortcutGroups] : baseShortcutGroups;
 
   return (
     <AnimatePresence>

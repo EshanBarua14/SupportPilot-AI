@@ -127,6 +127,12 @@ export interface SupportAgent {
   systemInstruction: string;
   reasoningLog?: string;
   isActive: boolean;
+  metrics?: {
+    avgEfficiency: number;
+    avgResponseTimeMs: number;
+    successfulRuns: number;
+    failedRuns: number;
+  };
 }
 
 export interface AuditLogEntry {

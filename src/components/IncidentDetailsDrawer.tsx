@@ -36,6 +36,47 @@ export default function IncidentDetailsDrawer({ incidentId, incident, onClose, o
   const [data, setData] = useState<CorrelationData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeDetailStage, setActiveDetailStage] = useState<string>('identification');
+  const [hoveredStage, setHoveredStage] = useState<string | null>(null);
+
+  const getStageDetail = (stageId: string, status?: string) => {
+    switch (stageId) {
+      case 'identification':
+        return {
+          title: "Incident Identification",
+          desc: "Automated telemetry log scanners raised a high-frequency exception flag for trace latency breaches.",
+          time: "T-0s"
+        };
+      case 'triage':
+        return {
+          title: "Automated Triage",
+          desc: status === 'OPEN' 
+            ? "Assigned to the automated AI queue. Fetching correlated database locks." 
+            : "Successfully assigned to operator. Log stream correlated with Jaeger traces.",
+          time: "T-2m"
+        };
+      case 'remediation':
+        return {
+          title: "Runbook Remediation",
+          desc: status === 'SOLVED'
+            ? "Remediation command executed and verified successfully."
+            : status === 'INVESTIGATING' || status === 'ESCALATED'
+              ? "Running active AI recommended actions on the target container replica."
+              : "Awaiting operator authorization to dispatch remediation script.",
+          time: "T-5m"
+        };
+      case 'resolution':
+        return {
+          title: "SLA Resolution",
+          desc: status === 'SOLVED'
+            ? "All service levels restored. CSAT metrics logged."
+            : "Awaiting health check confirmation to close the exception ticket.",
+          time: "T-12m"
+        };
+      default:
+        return { title: "", desc: "", time: "" };
+    }
+  };
 
   const getStageStates = (status?: string): Record<string, 'completed' | 'active' | 'pending'> => {
     const states: Record<string, 'completed' | 'active' | 'pending'> = {
@@ -189,18 +230,27 @@ export default function IncidentDetailsDrawer({ incidentId, incident, onClose, o
                       {stages.map((stg) => {
                         const state = stageStates[stg.id];
                         const IconComponent = stg.icon;
+                        const isCurrentDetail = (hoveredStage || activeDetailStage) === stg.id;
                         
                         return (
-                          <div key={stg.id} className="flex flex-col items-center space-y-1.5 relative z-10 flex-1">
+                          <div 
+                            key={stg.id} 
+                            onMouseEnter={() => setHoveredStage(stg.id)}
+                            onMouseLeave={() => setHoveredStage(null)}
+                            onClick={() => setActiveDetailStage(stg.id)}
+                            className="flex flex-col items-center space-y-1.5 relative z-10 flex-1 cursor-pointer group"
+                          >
                             {/* Circle Indicator */}
                             <div className={`h-[28px] w-[28px] rounded-full border flex items-center justify-center transition-all duration-300 ${
-                              state === 'completed'
-                                ? 'bg-emerald-500/10 border-emerald-500 text-emerald-400 shadow-md shadow-emerald-500/10'
-                                : state === 'active'
-                                  ? 'bg-indigo-600/20 border-indigo-500 text-indigo-400 animate-pulse shadow-md shadow-indigo-500/25 scale-[1.05]'
-                                  : 'bg-slate-950 border-slate-800 text-slate-500'
+                              isCurrentDetail
+                                ? 'bg-indigo-500 border-indigo-400 text-white shadow-lg shadow-indigo-500/30 scale-[1.12]'
+                                : state === 'completed'
+                                  ? 'bg-emerald-500/10 border-emerald-500 text-emerald-400 shadow-md shadow-emerald-500/10 group-hover:bg-emerald-500/20'
+                                  : state === 'active'
+                                    ? 'bg-indigo-600/20 border-indigo-500 text-indigo-400 animate-pulse shadow-md shadow-indigo-500/25 scale-[1.05]'
+                                    : 'bg-slate-950 border-slate-800 text-slate-500 group-hover:border-slate-700'
                             }`}>
-                              {state === 'completed' ? (
+                              {state === 'completed' && !isCurrentDetail ? (
                                 <Icons.Check className="h-4 w-4 stroke-[2.5]" />
                               ) : (
                                 <IconComponent className="h-3.5 w-3.5" />
@@ -209,12 +259,14 @@ export default function IncidentDetailsDrawer({ incidentId, incident, onClose, o
 
                             {/* Text labels */}
                             <div className="text-center">
-                              <p className={`font-display text-[10px] font-bold ${
-                                state === 'completed'
-                                  ? 'text-slate-200'
-                                  : state === 'active'
-                                    ? 'text-indigo-400 font-extrabold'
-                                    : 'text-slate-500'
+                              <p className={`font-display text-[10px] font-bold transition-colors ${
+                                isCurrentDetail
+                                  ? 'text-indigo-400 font-extrabold'
+                                  : state === 'completed'
+                                    ? 'text-slate-200'
+                                    : state === 'active'
+                                      ? 'text-indigo-400/90 font-extrabold animate-pulse'
+                                      : 'text-slate-500 group-hover:text-slate-400'
                               }`}>
                                 {stg.label}
                               </p>
@@ -226,6 +278,32 @@ export default function IncidentDetailsDrawer({ incidentId, incident, onClose, o
                         );
                       })}
                     </div>
+
+                    {/* Integrated Stage Detail View Board */}
+                    {(() => {
+                      const displayedStageId = hoveredStage || activeDetailStage;
+                      const stageDetail = getStageDetail(displayedStageId, incident?.status);
+                      const state = stageStates[displayedStageId];
+                      return (
+                        <div className="mt-3 p-3 rounded-lg bg-slate-950/80 border border-slate-900 font-sans text-xxs transition-all duration-200 animate-fadeIn">
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1.5 mb-1.5">
+                            <span className="font-bold text-slate-200 flex items-center space-x-1 uppercase tracking-wider text-[9px]">
+                              <span className={`h-1.5 w-1.5 rounded-full mr-1 ${
+                                state === 'completed' ? 'bg-emerald-500' : state === 'active' ? 'bg-indigo-500 animate-ping' : 'bg-slate-600'
+                              }`} />
+                              {stageDetail.title}
+                            </span>
+                            <span className="font-mono text-slate-500 text-[9px] font-bold">{stageDetail.time}</span>
+                          </div>
+                          <p className="text-slate-400 leading-relaxed text-[9.5px]">
+                            {stageDetail.desc}
+                          </p>
+                          <div className="mt-1.5 text-[8px] text-slate-500 italic">
+                            Click or hover any lifecycle stage node above to review telemetry parameters.
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* System Metadata bento boxes */}

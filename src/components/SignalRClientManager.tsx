@@ -14,6 +14,12 @@ export default function SignalRClientManager({ onAlert, onAddAuditLog }: SignalR
       try {
         const response = await fetch('/api/aspnet/signalr-logs');
         if (!response.ok) return;
+        
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          return;
+        }
+
         const logs: string[] = await response.json();
 
         if (logs.length === 0) return;

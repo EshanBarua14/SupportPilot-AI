@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'motion/react';
 interface ComponentHealth {
   status: string;
   type?: string;
+  index?: string;
   latencyMs?: number;
   hitRatePct?: number;
   activeQueues?: number;

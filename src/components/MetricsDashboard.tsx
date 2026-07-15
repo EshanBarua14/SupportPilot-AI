@@ -5,6 +5,8 @@ import {
   ResponsiveContainer,
   AreaChart,
   Area,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -332,134 +334,74 @@ export default function MetricsDashboard() {
     printWindow.document.close();
   };
 
-  // Custom SVG bar graph rendering for incident count trends over time (avoiding canvas crashes)
-  const renderTrendBarGraph = () => {
-    const points = data.incidentTrends;
-    const maxVal = Math.max(...points.map(p => p.value), 10);
-    const width = 500;
-    const height = 150;
-    const padding = 25;
-    const chartWidth = width - padding * 2;
-    const chartHeight = height - padding * 2;
-    const barWidth = (chartWidth / points.length) * 0.55;
-    const spacing = (chartWidth / points.length) * 0.45;
-
-    // Helper to draw horizontal grid lines for professional engineering aesthetic
-    const gridLines = [0.25, 0.5, 0.75, 1];
-
+  // Beautiful Recharts-based Weekly Incident Volume Trend Chart
+  const renderWeeklyIncidentVolumeChart = () => {
     return (
-      <div className="bento-card-premium p-5 font-mono text-xs h-[320px] flex flex-col justify-between">
-        <div className="mb-2 flex items-center justify-between text-xxs border-b border-slate-800/40 pb-2.5">
+      <div className="bento-card-premium p-5 flex flex-col h-[320px]">
+        <div className="mb-4 flex items-center justify-between text-xxs border-b border-slate-800/40 pb-2.5">
           <span className="font-bold text-slate-300 uppercase tracking-wider flex items-center space-x-2">
             <Icons.BarChart3 className="h-4 w-4 text-indigo-400" />
-            <span className="font-display font-medium text-white">Outage Count Historical Trends</span>
+            <span className="font-display font-medium text-white">Weekly Incident Volume Trend</span>
           </span>
-          <span className="text-slate-500 font-semibold uppercase tracking-widest text-[9px]">PAST 7 DAYS</span>
+          <span className="rounded bg-indigo-500/15 px-2 py-0.5 font-mono text-[8px] font-bold text-indigo-400 border border-indigo-500/30">
+            PAST 7 DAYS
+          </span>
         </div>
         
-        <div className="flex-1 min-h-0 flex items-center">
-          <svg viewBox={`0 0 ${width} ${height}`} className="w-full">
-            {/* Subtle Grid Lines */}
-            {gridLines.map((ratio, idx) => {
-              const y = padding + chartHeight * (1 - ratio);
-              const valueLabel = Math.round(maxVal * ratio);
-              return (
-                <g key={`grid-${idx}`}>
-                  <line 
-                    x1={padding} 
-                    y1={y} 
-                    x2={width - padding} 
-                    y2={y} 
-                    stroke="rgba(148, 163, 184, 0.08)" 
-                    strokeDasharray="2 3" 
-                    strokeWidth="1"
-                  />
-                  <text 
-                    x={padding - 6} 
-                    y={y + 3} 
-                    fill="rgba(148, 163, 184, 0.35)" 
-                    fontSize="6.5" 
-                    textAnchor="end"
-                  >
-                    {valueLabel}
-                  </text>
-                </g>
-              );
-            })}
-
-            {points.map((p, i) => {
-              const barHeight = (p.value / maxVal) * chartHeight;
-              const x = padding + i * (barWidth + spacing) + spacing / 2;
-              const y = padding + chartHeight - barHeight;
-              return (
-                <g key={i} className="group cursor-pointer">
-                  {/* Invisible hover helper bar */}
-                  <rect
-                    x={x - spacing / 2}
-                    y={padding}
-                    width={barWidth + spacing}
-                    height={chartHeight}
-                    fill="transparent"
-                  />
-                  
-                  {/* Bar rect */}
-                  <rect
-                    x={x}
-                    y={y}
-                    width={barWidth}
-                    height={barHeight}
-                    rx="3.5"
-                    fill="url(#bar-gradient)"
-                    className="transition-all duration-300 hover:fill-indigo-300 hover:opacity-100 opacity-90"
-                  />
-                  
-                  {/* Subtle top cap highlight line on hover */}
-                  <rect
-                    x={x}
-                    y={y}
-                    width={barWidth}
-                    height="2"
-                    rx="1"
-                    fill="#c7d2fe"
-                    className="opacity-0 group-hover:opacity-100 transition-opacity duration-300"
-                  />
-
-                  {/* Value tooltip label text */}
-                  <text
-                    x={x + barWidth / 2}
-                    y={y - 6}
-                    fill="#c7d2fe"
-                    fontSize="7.5"
-                    fontWeight="bold"
-                    textAnchor="middle"
-                    className="opacity-0 group-hover:opacity-100 transition-opacity duration-250 select-none"
-                  >
-                    {p.value}
-                  </text>
-                  
-                  {/* Date labels */}
-                  <text
-                    x={x + barWidth / 2}
-                    y={height - 6}
-                    fill="#64748b"
-                    fontSize="7.5"
-                    textAnchor="middle"
-                    className="font-medium"
-                  >
-                    {p.label}
-                  </text>
-                </g>
-              );
-            })}
-            
-            <defs>
-              <linearGradient id="bar-gradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#a5b4fc" stopOpacity="0.95" />
-                <stop offset="35%" stopColor="#6366f1" stopOpacity="0.85" />
-                <stop offset="100%" stopColor="#4338ca" stopOpacity="0.25" />
-              </linearGradient>
-            </defs>
-          </svg>
+        <div className="flex-1 w-full min-h-0 text-[9px] font-mono">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data.incidentTrends} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+              <defs>
+                <linearGradient id="colorWeeklyVolume" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.85}/>
+                  <stop offset="95%" stopColor="#4338ca" stopOpacity={0.15}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.05)" />
+              <XAxis 
+                dataKey="label" 
+                stroke="#475569" 
+                tickLine={false} 
+                fontSize={9}
+                dy={8}
+              />
+              <YAxis 
+                stroke="#475569" 
+                tickLine={false} 
+                fontSize={9}
+                dx={-8}
+                allowDecimals={false}
+              />
+              <Tooltip 
+                cursor={{ fill: 'rgba(99, 102, 241, 0.04)' }}
+                content={({ active, payload }: any) => {
+                  if (active && payload && payload.length) {
+                    const entry = payload[0].payload;
+                    return (
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/95 p-2.5 font-mono text-[10px] shadow-2xl backdrop-blur-md">
+                        <p className="font-bold text-white mb-1.5 border-b border-slate-900 pb-1 flex items-center justify-between">
+                          <span>Reporting Day:</span>
+                          <span className="text-indigo-400">{entry.label}</span>
+                        </p>
+                        <div className="flex items-center justify-between space-x-4">
+                          <span className="text-slate-400">Total Outages:</span>
+                          <span className="font-bold text-white">{entry.value} incidents</span>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                }}
+              />
+              <Bar 
+                name="Total Outages"
+                dataKey="value" 
+                fill="url(#colorWeeklyVolume)" 
+                radius={[4, 4, 0, 0]}
+                barSize={24}
+              />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       </div>
     );
@@ -594,8 +536,20 @@ export default function MetricsDashboard() {
         
         {/* CARD 1: ACTIVE SLAS */}
         <div className="bento-card-premium p-4 relative overflow-hidden flex items-center justify-between group">
-          <div className="space-y-1 z-10">
-            <div className="text-xxs font-bold text-slate-400 uppercase tracking-wider font-display">Active Outage SLAs</div>
+          <div className="space-y-1 z-10 w-full pr-4">
+            <div className="flex items-center space-x-1 text-xxs font-bold text-slate-400 uppercase tracking-wider font-display">
+              <span>Active Outage SLAs</span>
+              
+              {/* Tooltip */}
+              <div className="relative group/tooltip inline-block">
+                <Icons.HelpCircle className="h-3.5 w-3.5 text-slate-500 hover:text-white transition-colors cursor-pointer" />
+                <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover/tooltip:block z-50 w-52 rounded-xl border border-slate-800 bg-slate-950 p-2.5 text-[9px] font-mono font-normal text-slate-400 shadow-xl leading-normal pointer-events-none normal-case">
+                  <span className="font-bold text-indigo-400 uppercase tracking-wider text-[8px] block mb-1">Severity Calculation</span>
+                  Calculated based on active production exceptions, tenant tier impact, and automated trace latency degradation coefficients.
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800" />
+                </div>
+              </div>
+            </div>
             <div className="text-3xl font-black text-indigo-400 font-display tracking-tight transition-transform duration-300 group-hover:scale-105 origin-left">
               {data.activeSlas}
             </div>
@@ -609,8 +563,20 @@ export default function MetricsDashboard() {
 
         {/* CARD 2: CSAT RATING */}
         <div className="bento-card-premium p-4 relative overflow-hidden flex items-center justify-between group">
-          <div className="space-y-1 z-10">
-            <div className="text-xxs font-bold text-slate-400 uppercase tracking-wider font-display">Customer CSAT Benchmark</div>
+          <div className="space-y-1 z-10 w-full pr-4">
+            <div className="flex items-center space-x-1 text-xxs font-bold text-slate-400 uppercase tracking-wider font-display">
+              <span>Customer CSAT Benchmark</span>
+              
+              {/* Tooltip */}
+              <div className="relative group/tooltip inline-block">
+                <Icons.HelpCircle className="h-3.5 w-3.5 text-slate-500 hover:text-white transition-colors cursor-pointer" />
+                <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover/tooltip:block z-50 w-52 rounded-xl border border-slate-800 bg-slate-950 p-2.5 text-[9px] font-mono font-normal text-slate-400 shadow-xl leading-normal pointer-events-none normal-case">
+                  <span className="font-bold text-emerald-400 uppercase tracking-wider text-[8px] block mb-1">CSAT Scoring Matrix</span>
+                  Computed as a rolling average of post-incident client satisfaction ratings across resolved runbooks.
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800" />
+                </div>
+              </div>
+            </div>
             <div className="text-3xl font-black text-emerald-400 font-display tracking-tight transition-transform duration-300 group-hover:scale-105 origin-left">
               {data.csat}%
             </div>
@@ -624,8 +590,20 @@ export default function MetricsDashboard() {
 
         {/* CARD 3: ACTIVE SYSTEM AGENTS */}
         <div className="bento-card-premium p-4 relative overflow-hidden flex items-center justify-between group">
-          <div className="space-y-1 z-10">
-            <div className="text-xxs font-bold text-slate-400 uppercase tracking-wider font-display">AI Coprocessors Online</div>
+          <div className="space-y-1 z-10 w-full pr-4">
+            <div className="flex items-center space-x-1 text-xxs font-bold text-slate-400 uppercase tracking-wider font-display">
+              <span>AI Coprocessors Online</span>
+              
+              {/* Tooltip */}
+              <div className="relative group/tooltip inline-block">
+                <Icons.HelpCircle className="h-3.5 w-3.5 text-slate-500 hover:text-white transition-colors cursor-pointer" />
+                <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover/tooltip:block z-50 w-52 rounded-xl border border-slate-800 bg-slate-950 p-2.5 text-[9px] font-mono font-normal text-slate-400 shadow-xl leading-normal pointer-events-none normal-case">
+                  <span className="font-bold text-white uppercase tracking-wider text-[8px] block mb-1">Health Score Calculation</span>
+                  Computed dynamically from task resolution rates, average latency, and prompt instruction matching accuracy.
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800" />
+                </div>
+              </div>
+            </div>
             <div className="text-3xl font-black text-white font-display tracking-tight transition-transform duration-300 group-hover:scale-105 origin-left">
               {data.activeAgents} <span className="text-xs text-slate-500 font-normal">/ 19</span>
             </div>
@@ -639,8 +617,20 @@ export default function MetricsDashboard() {
 
         {/* CARD 4: PLATFORM UPTIME */}
         <div className="bento-card-premium p-4 relative overflow-hidden flex items-center justify-between group">
-          <div className="space-y-1 z-10">
-            <div className="text-xxs font-bold text-slate-400 uppercase tracking-wider font-display">Service Level Agreement</div>
+          <div className="space-y-1 z-10 w-full pr-4">
+            <div className="flex items-center space-x-1 text-xxs font-bold text-slate-400 uppercase tracking-wider font-display">
+              <span>Service Level Agreement</span>
+              
+              {/* Tooltip */}
+              <div className="relative group/tooltip inline-block">
+                <Icons.HelpCircle className="h-3.5 w-3.5 text-slate-500 hover:text-white transition-colors cursor-pointer" />
+                <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover/tooltip:block z-50 w-52 rounded-xl border border-slate-800 bg-slate-950 p-2.5 text-[9px] font-mono font-normal text-slate-400 shadow-xl leading-normal pointer-events-none normal-case">
+                  <span className="font-bold text-amber-400 uppercase tracking-wider text-[8px] block mb-1">SLA Uptime Tracker</span>
+                  Tracks target uptime ratios against core endpoint microservice timeouts and critical container outages.
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800" />
+                </div>
+              </div>
+            </div>
             <div className="text-3xl font-black text-amber-400 font-display tracking-tight transition-transform duration-300 group-hover:scale-105 origin-left">
               {data.uptimePct}%
             </div>
@@ -715,7 +705,7 @@ export default function MetricsDashboard() {
       {/* 3. HISTORICAL OUTAGE TRENDS & ACTIVE REAL-TIME ALERTS */}
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-6">
-          {renderTrendBarGraph()}
+          {renderWeeklyIncidentVolumeChart()}
         </div>
 
         <div className="col-span-6 bento-card-premium p-5 flex flex-col justify-between h-[320px]">

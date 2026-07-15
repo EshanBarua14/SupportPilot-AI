@@ -53,6 +53,34 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
     setSortOrder('desc');
   };
 
+  const handleDownloadCSV = () => {
+    const headers = ['ID', 'Timestamp', 'Operator', 'Module', 'Action', 'Status', 'Payload'];
+    const rows = filteredLogs.map(log => [
+      log.id,
+      log.timestamp,
+      log.operator,
+      log.module,
+      log.action,
+      log.status,
+      `"${log.payload.replace(/"/g, '""')}"`
+    ]);
+    
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `supportpilot_audit_export_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="flex h-[calc(100vh-130px)] flex-col rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden text-xs font-sans">
       
@@ -106,13 +134,22 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
                   <Icons.SlidersHorizontal className="h-3.5 w-3.5" />
                   <span>Interactive Audit Query Filters</span>
                 </span>
-                <button
-                  onClick={clearFilters}
-                  className="text-slate-500 hover:text-white text-[10px] font-mono flex items-center space-x-1"
-                >
-                  <Icons.RotateCcw className="h-3 w-3" />
-                  <span>Reset Query</span>
-                </button>
+                <div className="flex items-center space-x-4">
+                  <button
+                    onClick={handleDownloadCSV}
+                    className="text-emerald-400 hover:text-emerald-300 text-[10px] font-mono font-bold flex items-center space-x-1 border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1 rounded-md cursor-pointer transition-colors"
+                  >
+                    <Icons.Download className="h-3 w-3" />
+                    <span>Download CSV</span>
+                  </button>
+                  <button
+                    onClick={clearFilters}
+                    className="text-slate-500 hover:text-white text-[10px] font-mono flex items-center space-x-1"
+                  >
+                    <Icons.RotateCcw className="h-3 w-3" />
+                    <span>Reset Query</span>
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3">

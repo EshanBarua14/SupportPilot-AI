@@ -40,6 +40,43 @@ export default function AspNetConsole() {
 
   // SignalR states
   const [signalrEvents, setSignalrEvents] = useState<string[]>([]);
+  const [logSeverityFilter, setLogSeverityFilter] = useState<'ALL' | 'INFO' | 'WARN' | 'ERROR'>('ALL');
+  const [isRowHighlightEnabled, setIsRowHighlightEnabled] = useState<boolean>(true);
+
+  const getLogSeverity = (evt: string): 'INFO' | 'WARN' | 'ERROR' => {
+    const lower = evt.toLowerCase();
+    if (
+      lower.includes('[security risk alert]') ||
+      lower.includes('exception') ||
+      lower.includes('error') ||
+      lower.includes('failed') ||
+      lower.includes('blocked') ||
+      lower.includes('insufficient') ||
+      lower.includes('oomkilled') ||
+      lower.includes('exit code 137')
+    ) {
+      return 'ERROR';
+    }
+    if (
+      lower.includes('[signalr alert]') ||
+      lower.includes('warn') ||
+      lower.includes('warning') ||
+      lower.includes('contention') ||
+      lower.includes('degraded') ||
+      lower.includes('waiting') ||
+      lower.includes('stalling') ||
+      lower.includes('timeout')
+    ) {
+      return 'WARN';
+    }
+    return 'INFO';
+  };
+
+  const filteredSignalrEvents = signalrEvents.filter(evt => {
+    if (logSeverityFilter === 'ALL') return true;
+    return getLogSeverity(evt) === logSeverityFilter;
+  });
+
   const [customAlertMsg, setCustomAlertMsg] = useState<string>('CPU consumption exceeded 90% limit in billing cluster-14');
   const [broadcastTargetTenant, setBroadcastTargetTenant] = useState<string>('11111111-1111-1111-1111-111111111111');
   const signalrEndRef = useRef<HTMLDivElement>(null);
@@ -888,22 +925,90 @@ export default function AspNetConsole() {
                   <span className="text-[10px] text-slate-500 font-mono">Transport: WebSockets</span>
                 </div>
 
+                {/* LOG severity level filter and row-highlighting control toolbar */}
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-900 px-4 py-2 bg-slate-900/10 text-[9px] font-mono select-none">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-slate-500 uppercase font-bold text-[8px]">Severity Filter:</span>
+                    <div className="flex items-center bg-slate-950 border border-slate-900 rounded-lg p-0.5">
+                      {(['ALL', 'INFO', 'WARN', 'ERROR'] as const).map((lvl) => (
+                        <button
+                          type="button"
+                          key={lvl}
+                          onClick={() => setLogSeverityFilter(lvl)}
+                          className={`px-2 py-0.5 rounded text-[8px] font-bold transition-all cursor-pointer ${
+                            logSeverityFilter === lvl
+                              ? lvl === 'ERROR'
+                                ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                : lvl === 'WARN'
+                                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                : lvl === 'INFO'
+                                ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
+                                : 'bg-slate-800 text-white'
+                              : 'text-slate-500 hover:text-slate-300'
+                          }`}
+                        >
+                          {lvl}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <span className="text-slate-500 uppercase font-bold text-[8px]">Row Highlight:</span>
+                    <button
+                      type="button"
+                      onClick={() => setIsRowHighlightEnabled(!isRowHighlightEnabled)}
+                      className={`flex items-center space-x-1 px-2 py-0.5 rounded border transition-all cursor-pointer ${
+                        isRowHighlightEnabled
+                          ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400'
+                          : 'bg-slate-950 border-slate-900 text-slate-500 hover:text-slate-400'
+                      }`}
+                    >
+                      {isRowHighlightEnabled ? (
+                        <>
+                          <Icons.Check className="h-3 w-3" />
+                          <span>Enabled</span>
+                        </>
+                      ) : (
+                        <>
+                          <Icons.X className="h-3 w-3" />
+                          <span>Disabled</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
                 <div className="flex-1 overflow-auto p-4 font-mono text-[10px] text-slate-300 leading-relaxed bg-slate-950/95 space-y-2 select-text">
-                  {signalrEvents.length === 0 ? (
-                    <div className="h-full flex items-center justify-center text-slate-600">
-                      Connecting to ASP.NET Core SignalR stream...
+                  {filteredSignalrEvents.length === 0 ? (
+                    <div className="h-full flex items-center justify-center text-slate-600 italic">
+                      {signalrEvents.length === 0 ? "Connecting to ASP.NET Core SignalR stream..." : "No logs matching current severity filter."}
                     </div>
                   ) : (
-                    signalrEvents.map((evt, idx) => {
-                      let color = 'text-slate-400';
-                      if (evt.includes('[JWT AuthService]')) color = 'text-sky-400';
-                      else if (evt.includes('[MediatR CQRS]')) color = 'text-indigo-400';
-                      else if (evt.includes('[SignalR Broadcast]')) color = 'text-emerald-400';
-                      else if (evt.includes('[SignalR Alert]')) color = 'text-rose-400 font-bold';
-                      else if (evt.includes('[SECURITY RISK ALERT]')) color = 'text-rose-500 font-bold bg-rose-500/10 px-1 py-0.5 rounded';
+                    filteredSignalrEvents.map((evt, idx) => {
+                      const severity = getLogSeverity(evt);
+                      let styleClass = '';
+                      
+                      if (isRowHighlightEnabled) {
+                        if (severity === 'ERROR') {
+                          styleClass = 'bg-rose-950/20 border-l-2 border-rose-500 text-rose-400 px-2 py-1 rounded';
+                        } else if (severity === 'WARN') {
+                          styleClass = 'bg-amber-950/20 border-l-2 border-amber-500 text-amber-400 px-2 py-1 rounded';
+                        } else {
+                          styleClass = 'bg-slate-900/40 border-l-2 border-indigo-500/60 text-slate-300 px-2 py-1 rounded';
+                        }
+                      } else {
+                        // Standard coloring
+                        if (evt.includes('[JWT AuthService]')) styleClass = 'text-sky-400';
+                        else if (evt.includes('[MediatR CQRS]')) styleClass = 'text-indigo-400';
+                        else if (evt.includes('[SignalR Broadcast]')) styleClass = 'text-emerald-400';
+                        else if (evt.includes('[SignalR Alert]')) styleClass = 'text-rose-400 font-bold';
+                        else if (evt.includes('[SECURITY RISK ALERT]')) styleClass = 'text-rose-500 font-bold bg-rose-500/10 px-1 py-0.5 rounded';
+                        else styleClass = 'text-slate-400';
+                      }
 
                       return (
-                        <div key={idx} className={`${color} leading-normal`}>
+                        <div key={idx} className={`${styleClass} leading-normal transition-all duration-150`}>
                           {evt}
                         </div>
                       );

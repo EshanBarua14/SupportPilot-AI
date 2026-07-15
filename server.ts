@@ -798,6 +798,18 @@ app.get('/api/aspnet/file-content', async (req, res) => {
   }
 });
 
+// 10. Live Agent Polling Status endpoint (Simulated telemetry heartbeat)
+app.get('/api/aspnet/agents/poll', (req, res) => {
+  const seed = Math.random();
+  res.json({
+    timestamp: new Date().toISOString(),
+    metricsShiftPct: parseFloat((seed * 6 - 3).toFixed(1)), // -3% to +3%
+    activeRequests: Math.floor(10 + seed * 35),
+    latencyDeltaMs: Math.floor(seed * 20 - 10), // -10ms to +10ms
+    alertsDetected: seed > 0.88 ? 1 : 0
+  });
+});
+
 // ----------------- VITE MIDDLEWARE SETUP & SERVER START -----------------
 
 async function startServer() {
