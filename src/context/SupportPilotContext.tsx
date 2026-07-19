@@ -53,6 +53,8 @@ export interface SupportPilotContextType {
   theme: string;
   setTheme: (theme: string) => void;
   handleSetTheme: (newTheme: string) => void;
+  uiDensity: 'compact' | 'spacious';
+  setUiDensity: (density: 'compact' | 'spacious') => void;
   notifications: SystemNotification[];
   setNotifications: React.Dispatch<React.SetStateAction<SystemNotification[]>>;
   handleMarkAllNotificationsRead: () => void;
@@ -62,6 +64,8 @@ export interface SupportPilotContextType {
   handleExecuteCommandFromPalette: (commandName: string) => void;
   searchResults: { incidents: any[]; runbooks: any[]; audits: any[] };
   hasSearchResults: boolean;
+  isSystemFrozen: boolean;
+  setIsSystemFrozen: (frozen: boolean) => void;
 }
 
 const SupportPilotContext = createContext<SupportPilotContextType | undefined>(undefined);
@@ -81,6 +85,7 @@ interface SupportPilotProviderProps {
 export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
   const [activeTab, setActiveTab] = useState<TabType>('workspace');
   const [modelSelection, setModelSelection] = useState('gemini-3.5-flash');
+  const [isSystemFrozen, setIsSystemFrozen] = useState(false);
 
   // Sidebar Layout Preferences with localStorage persistence
   const [isPinned, setIsPinned] = useState<boolean>(() => {
@@ -189,6 +194,23 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
   const [theme, setTheme] = useState<string>(() => {
     return localStorage.getItem('supportpilot_theme') || 'slate';
   });
+
+  // UI Density state and synchronizer
+  const [uiDensity, setUiDensity] = useState<'compact' | 'spacious'>(() => {
+    return (localStorage.getItem('supportpilot_uidensity') as 'compact' | 'spacious') || 'compact';
+  });
+
+  const handleSetUiDensity = useCallback((newDensity: 'compact' | 'spacious') => {
+    localStorage.setItem('supportpilot_uidensity', newDensity);
+    setUiDensity(newDensity);
+    handleAddAuditLog(
+      "Eshan Barua (CTO)",
+      "Update UI Density",
+      "UI Console",
+      "SUCCESS",
+      `Changed visual layout density mode to: ${newDensity.toUpperCase()}`
+    );
+  }, [handleAddAuditLog]);
 
   const handleSetTheme = useCallback((newTheme: string) => {
     localStorage.setItem('supportpilot_theme', newTheme);
@@ -543,6 +565,8 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
         theme,
         setTheme,
         handleSetTheme,
+        uiDensity,
+        setUiDensity: handleSetUiDensity,
         notifications,
         setNotifications,
         handleMarkAllNotificationsRead,
@@ -552,6 +576,8 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
         handleExecuteCommandFromPalette,
         searchResults,
         hasSearchResults,
+        isSystemFrozen,
+        setIsSystemFrozen,
       }}
     >
       {children}

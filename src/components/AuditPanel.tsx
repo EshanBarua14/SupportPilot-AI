@@ -81,6 +81,19 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
     document.body.removeChild(link);
   };
 
+  const handleDownloadJSON = () => {
+    const jsonContent = JSON.stringify(filteredLogs, null, 2);
+    const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `supportpilot_audit_export_${new Date().toISOString().slice(0, 10)}.json`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="flex h-[calc(100vh-130px)] flex-col rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden text-xs font-sans">
       
@@ -134,20 +147,29 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
                   <Icons.SlidersHorizontal className="h-3.5 w-3.5" />
                   <span>Interactive Audit Query Filters</span>
                 </span>
-                <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-2">
                   <button
                     onClick={handleDownloadCSV}
-                    className="text-emerald-400 hover:text-emerald-300 text-[10px] font-mono font-bold flex items-center space-x-1 border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1 rounded-md cursor-pointer transition-colors"
+                    className="text-emerald-400 hover:text-emerald-300 text-[10px] font-mono font-bold flex items-center space-x-1 border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1 rounded-md cursor-pointer transition-colors animate-fadeIn"
+                    title="Export current query to CSV"
                   >
                     <Icons.Download className="h-3 w-3" />
-                    <span>Download CSV</span>
+                    <span>CSV</span>
+                  </button>
+                  <button
+                    onClick={handleDownloadJSON}
+                    className="text-indigo-400 hover:text-indigo-300 text-[10px] font-mono font-bold flex items-center space-x-1 border border-indigo-500/20 bg-indigo-500/5 px-2.5 py-1 rounded-md cursor-pointer transition-colors animate-fadeIn"
+                    title="Export current query to JSON"
+                  >
+                    <Icons.Download className="h-3 w-3" />
+                    <span>JSON</span>
                   </button>
                   <button
                     onClick={clearFilters}
-                    className="text-slate-500 hover:text-white text-[10px] font-mono flex items-center space-x-1"
+                    className="text-slate-500 hover:text-white text-[10px] font-mono flex items-center space-x-1 pl-1"
                   >
                     <Icons.RotateCcw className="h-3 w-3" />
-                    <span>Reset Query</span>
+                    <span>Reset</span>
                   </button>
                 </div>
               </div>

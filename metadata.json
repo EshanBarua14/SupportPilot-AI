@@ -1,6 +1,6 @@
 {
   "name": "SupportPilot AI",
   "description": "Enterprise-grade autonomous support engineering workspace and incident correlation cockpit, powered by AI agents.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

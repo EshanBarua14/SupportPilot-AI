@@ -122,9 +122,11 @@ export default function NotificationBell({
                 {notifications.length > 0 && (
                   <button
                     onClick={onClearAll}
-                    className="text-[10px] font-medium text-slate-500 hover:text-slate-300 transition-colors border-l border-slate-800 pl-2"
+                    className="text-[10px] font-bold text-slate-400 hover:text-rose-400 transition-colors border-l border-slate-800 pl-2 flex items-center space-x-0.5 cursor-pointer"
+                    title="Dismiss All Alerts"
                   >
-                    Clear All
+                    <Icons.CheckCheck className="h-3 w-3 mr-0.5" />
+                    Dismiss All
                   </button>
                 )}
               </div>

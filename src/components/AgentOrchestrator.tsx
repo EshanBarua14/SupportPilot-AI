@@ -3,6 +3,8 @@ import { SupportAgent } from '../types';
 import { SeedAgents } from '../data/simulation';
 import * as Icons from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import * as d3 from 'd3';
+import { useSupportPilot } from '../context/SupportPilotContext';
 
 interface AgentOrchestratorProps {
   modelSelection: string;
@@ -190,7 +192,95 @@ const getAgentScaleFactor = (agentId: string, isAutoScaling: boolean) => {
   return 1;
 };
 
+interface SparklineProps {
+  data: number[];
+}
+
+const Sparkline: React.FC<SparklineProps> = ({ data }) => {
+  const svgRef = React.useRef<SVGSVGElement | null>(null);
+
+  React.useEffect(() => {
+    if (!svgRef.current || data.length === 0) return;
+
+    const svg = d3.select(svgRef.current);
+    svg.selectAll('*').remove();
+
+    const width = 110;
+    const height = 22;
+    const padding = 2;
+
+    const xScale = d3.scaleLinear()
+      .domain([0, data.length - 1])
+      .range([padding, width - padding]);
+
+    const yScale = d3.scaleLinear()
+      .domain([Math.min(...data) - 1, Math.max(...data) + 1])
+      .range([height - padding, padding]);
+
+    // Create gradient
+    const defs = svg.append('defs');
+    const gradient = defs.append('linearGradient')
+      .attr('id', 'sparkline-grad')
+      .attr('x1', '0%')
+      .attr('y1', '0%')
+      .attr('x2', '0%')
+      .attr('y2', '100%');
+
+    gradient.append('stop')
+      .attr('offset', '0%')
+      .attr('stop-color', '#818cf8')
+      .attr('stop-opacity', 0.25);
+
+    gradient.append('stop')
+      .attr('offset', '100%')
+      .attr('stop-color', '#818cf8')
+      .attr('stop-opacity', 0.0);
+
+    const lineGenerator = d3.line<number>()
+      .x((_, i) => xScale(i))
+      .y(d => yScale(d))
+      .curve(d3.curveMonotoneX);
+
+    const areaGenerator = d3.area<number>()
+      .x((_, i) => xScale(i))
+      .y0(height)
+      .y1(d => yScale(d))
+      .curve(d3.curveMonotoneX);
+
+    svg.append('path')
+      .datum(data)
+      .attr('fill', 'url(#sparkline-grad)')
+      .attr('d', areaGenerator);
+
+    svg.append('path')
+      .datum(data)
+      .attr('fill', 'none')
+      .attr('stroke', '#6366f1')
+      .attr('stroke-width', 1.8)
+      .attr('d', lineGenerator);
+
+    const endIdx = data.length - 1;
+    const endX = xScale(endIdx);
+    const endY = yScale(data[endIdx]);
+
+    svg.append('circle')
+      .attr('cx', endX)
+      .attr('cy', endY)
+      .attr('r', 3)
+      .attr('fill', '#ffffff')
+      .attr('stroke', '#4f46e5')
+      .attr('stroke-width', 1.5);
+  }, [data]);
+
+  return (
+    <div className="relative inline-block">
+      <svg ref={svgRef} width="110" height="22" className="overflow-visible" />
+    </div>
+  );
+};
+
 export default function AgentOrchestrator({ modelSelection }: AgentOrchestratorProps) {
+  const { isSystemFrozen } = useSupportPilot();
   const [agents, setAgents] = useState<SupportAgent[]>(SeedAgents);
   const [selectedAgent, setSelectedAgent] = useState<SupportAgent>(SeedAgents[0]);
   const [chatHistory, setChatHistory] = useState<Array<{ role: 'user' | 'agent', text: string, reasoning?: string }>>([]);
@@ -210,9 +300,193 @@ export default function AgentOrchestrator({ modelSelection }: AgentOrchestratorP
   const [pollMetrics, setPollMetrics] = useState<any>(null);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>(['Active', 'Error', 'Maintenance', 'Idle']);
 
+  // Sparkline data state
+  const [sparklineData, setSparklineData] = useState<number[]>([]);
+
+  // Filtering, sorting, drawer, and selection states
+  const [selectedCluster, setSelectedCluster] = useState<string>('All Clusters');
+  const [sortBy, setSortBy] = useState<'Name' | 'Status' | 'Efficiency' | 'Load'>('Name');
+  const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
+  const [drawerAgent, setDrawerAgent] = useState<SupportAgent | null>(null);
+
+  const getAgentStatus = (agentId: string) => {
+    const heatmap = generateAgentHeatmapData(agentId);
+    return heatmap[23]?.status || 'Active';
+  };
+
+  const getAgentEfficiency = (agent: SupportAgent) => {
+    return agent.metrics?.avgEfficiency || 95;
+  };
+
+  const getAgentLoad = (agent: SupportAgent) => {
+    const seed = agent.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    return Math.min(100, Math.max(10, Math.round(((agent.metrics?.avgResponseTimeMs || 200) % 50) + 40 + (seed % 15))));
+  };
+
+  const getAgentCluster = (agentId: string) => {
+    if (agentId.includes('support') || agentId.includes('incident')) {
+      return 'cluster-prod-1';
+    } else if (agentId.includes('db') || agentId.includes('database')) {
+      return 'cluster-db-primary';
+    } else if (agentId.includes('k8s') || agentId.includes('deployment')) {
+      return 'cluster-k8s-billing';
+    } else if (agentId.includes('discord') || agentId.includes('whatsapp') || agentId.includes('slack') || agentId.includes('teams') || agentId.includes('email')) {
+      return 'cluster-comms-edge';
+    } else {
+      return 'cluster-analytics-core';
+    }
+  };
+
+  const getAgentLogs = (agentId: string) => {
+    const seed = agentId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const now = new Date();
+    const logTemplates = [
+      "[INFO] Initializing agent thread connection...",
+      `[INFO] Attached to cluster: ${getAgentCluster(agentId)}`,
+      "[DEBUG] Active instruction buffer synced with neural-link.",
+      "[INFO] Verifying diagnostic permissions...",
+      "[SUCCESS] Latch locks cleared successfully.",
+      "[WARNING] High connection latency detected on read replica.",
+      "[SUCCESS] Dynamic failover initiated and completed in 24ms.",
+      "[INFO] Telemetry collection sweep completed.",
+      "[INFO] Waiting for next polling trigger..."
+    ];
+
+    const result = [];
+    for (let i = 0; i < 6; i++) {
+      const minAgo = (i * 3 + (seed % 7)) % 60;
+      const timeStr = new Date(now.getTime() - minAgo * 60 * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const logText = logTemplates[(seed + i) % logTemplates.length];
+      result.push({ time: timeStr, text: logText });
+    }
+    return result.reverse();
+  };
+
+  const getAgentEvents = (agentId: string) => {
+    const seed = agentId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const incidents = [
+      { id: `INC-${840 + (seed % 50)}`, title: "Database connection pool exhausted", severity: "CRITICAL" },
+      { id: `INC-${910 + (seed % 40)}`, title: "K8s pod billing-core-api Out Of Memory", severity: "HIGH" },
+      { id: `INC-${704 + (seed % 30)}`, title: "Redis cache eviction high speed", severity: "MEDIUM" },
+      { id: `INC-${620 + (seed % 20)}`, title: "Slack webhook rate limit exceeded", severity: "LOW" },
+      { id: `INC-${512 + (seed % 10)}`, title: "Ingress slow response on cluster-prod-1", severity: "HIGH" }
+    ];
+
+    return [
+      incidents[seed % incidents.length],
+      incidents[(seed + 1) % incidents.length],
+      incidents[(seed + 2) % incidents.length]
+    ];
+  };
+
+  const getFilteredAndSortedAgents = () => {
+    let list = agents;
+    if (selectedCluster !== 'All Clusters') {
+      list = list.filter(agt => getAgentCluster(agt.id) === selectedCluster);
+    }
+
+    return [...list].sort((a, b) => {
+      if (sortBy === 'Name') {
+        return a.name.localeCompare(b.name);
+      }
+      if (sortBy === 'Efficiency') {
+        const effA = getAgentEfficiency(a);
+        const effB = getAgentEfficiency(b);
+        return effB - effA;
+      }
+      if (sortBy === 'Load') {
+        const loadA = getAgentLoad(a);
+        const loadB = getAgentLoad(b);
+        return loadB - loadA;
+      }
+      if (sortBy === 'Status') {
+        const statusA = getAgentStatus(a.id);
+        const statusB = getAgentStatus(b.id);
+        const statusPriority: Record<string, number> = { 'Error': 0, 'Active': 1, 'Maintenance': 2, 'Idle': 3 };
+        return (statusPriority[statusA] ?? 99) - (statusPriority[statusB] ?? 99);
+      }
+      return 0;
+    });
+  };
+
+  const handleBulkOperation = (opType: 'RESTART' | 'DRAIN') => {
+    if (selectedAgentIds.length === 0) return;
+
+    if (opType === 'RESTART') {
+      setAgents(prev => prev.map(agent => {
+        if (selectedAgentIds.includes(agent.id)) {
+          return {
+            ...agent,
+            metrics: {
+              ...agent.metrics,
+              avgEfficiency: Math.min(100, Math.round(92 + Math.random() * 8)),
+              avgResponseTimeMs: Math.max(50, Math.round(100 + Math.random() * 50)),
+              successfulRuns: (agent.metrics?.successfulRuns || 0) + 1,
+            } as any
+          };
+        }
+        return agent;
+      }));
+
+      setChatHistory(prev => [
+        ...prev,
+        {
+          role: 'agent',
+          text: `SYSTEM NOTICE: Bulk RESTART operation completed for ${selectedAgentIds.length} agents. Connection state refreshed, memory pools garbage collected, and local threads re-initialized.`
+        }
+      ]);
+
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: `Successfully restarted ${selectedAgentIds.length} selected agents!` }
+      }));
+    } else {
+      setAgents(prev => prev.map(agent => {
+        if (selectedAgentIds.includes(agent.id)) {
+          return {
+            ...agent,
+            metrics: {
+              ...agent.metrics,
+              avgEfficiency: 70,
+              avgResponseTimeMs: 450,
+              successfulRuns: agent.metrics?.successfulRuns || 0,
+            } as any
+          };
+        }
+        return agent;
+      }));
+
+      setChatHistory(prev => [
+        ...prev,
+        {
+          role: 'agent',
+          text: `SYSTEM NOTICE: Bulk TRAFFIC_DRAIN command issued for ${selectedAgentIds.length} agents. Relocating active transaction streams to back-up clusters.`
+        }
+      ]);
+
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: `Draining traffic for ${selectedAgentIds.length} selected agents!` }
+      }));
+    }
+
+    setSelectedAgentIds([]);
+  };
+
+  React.useEffect(() => {
+    // Generate deterministic 15-minute rolling averages for the past 3 hours (12 periods)
+    const seed = selectedAgent.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const baseVal = selectedAgent.metrics?.avgEfficiency || 94;
+    const initialData = [];
+    for (let i = 0; i < 12; i++) {
+      const noise = Math.sin(seed + i) * 3 + Math.cos(seed * i) * 1.5;
+      const val = Math.max(70, Math.min(100, Math.round(baseVal + noise)));
+      initialData.push(val);
+    }
+    setSparklineData(initialData);
+  }, [selectedAgent.id]);
+
   // Background polling effect for live agent status updates (every 5 seconds)
   React.useEffect(() => {
-    if (!isLiveDataEnabled) return;
+    if (!isLiveDataEnabled || isSystemFrozen) return;
     
     const performPoll = async () => {
       try {
@@ -246,6 +520,10 @@ export default function AgentOrchestrator({ modelSelection }: AgentOrchestratorP
             const delta = (Math.random() * 3 - 1.5) + (data.metricsShiftPct || 0);
             const nextAvgEfficiency = Math.min(100, Math.max(78, Math.round((prevSelected.metrics?.avgEfficiency || 95) + delta)));
             const nextAvgResponseTime = Math.max(45, Math.round((prevSelected.metrics?.avgResponseTimeMs || 200) + (data.latencyDeltaMs || 0) + (Math.random() * 8 - 4)));
+            
+            // Append live point to rolling averages sparkline
+            setSparklineData(prev => [...prev.slice(1), nextAvgEfficiency]);
+
             return {
               ...prevSelected,
               metrics: {
@@ -266,7 +544,7 @@ export default function AgentOrchestrator({ modelSelection }: AgentOrchestratorP
     performPoll();
     const intervalId = setInterval(performPoll, 5000);
     return () => clearInterval(intervalId);
-  }, [isLiveDataEnabled]);
+  }, [isLiveDataEnabled, isSystemFrozen]);
 
   // Heatmap hover details state
   const [hoveredCell, setHoveredCell] = useState<any>(null);
@@ -406,25 +684,93 @@ export default function AgentOrchestrator({ modelSelection }: AgentOrchestratorP
     setTimeout(() => setShowTuningSaved(false), 3000);
   };
 
+  const allStats = {
+    Active: 0,
+    Error: 0,
+    Maintenance: 0,
+    Idle: 0
+  };
+  agents.forEach(a => {
+    const s = getAgentStatus(a.id);
+    if (s in allStats) {
+      allStats[s as keyof typeof allStats]++;
+    } else {
+      allStats.Active++;
+    }
+  });
+
   return (
     <div className="grid h-[calc(100vh-130px)] grid-cols-12 gap-4 font-sans text-xs">
       {/* 1. AGENTS SELECTOR (Sidebar) */}
-      <div className="col-span-3 overflow-hidden flex flex-col bento-card-premium p-4">
-        <div className="flex items-center justify-between mb-3">
+      <div className="col-span-3 overflow-hidden flex flex-col bento-card-premium p-4 relative">
+        <div className="flex items-center justify-between mb-2">
           <h3 className="font-display font-semibold text-xs text-indigo-400 uppercase tracking-wider text-white">
             Support Agent Matrix ({isAutoScaling ? '24' : '19'} Active)
           </h3>
         </div>
 
+        {/* Status Summary Stats Component */}
+        <div className="grid grid-cols-4 gap-1 mb-2 bg-slate-950/60 p-2 rounded-xl border border-slate-900/80">
+          <div className="text-center p-1 bg-emerald-500/5 rounded border border-emerald-500/10">
+            <div className="text-[10px] font-bold text-emerald-400">{allStats.Active}</div>
+            <div className="text-[7px] text-slate-400 font-medium font-mono uppercase">Active</div>
+          </div>
+          <div className="text-center p-1 bg-rose-500/5 rounded border border-rose-500/10">
+            <div className="text-[10px] font-bold text-rose-400">{allStats.Error}</div>
+            <div className="text-[7px] text-slate-400 font-medium font-mono uppercase">Error</div>
+          </div>
+          <div className="text-center p-1 bg-indigo-500/5 rounded border border-indigo-500/10">
+            <div className="text-[10px] font-bold text-indigo-400">{allStats.Idle}</div>
+            <div className="text-[7px] text-slate-400 font-medium font-mono uppercase">Idle</div>
+          </div>
+          <div className="text-center p-1 bg-amber-500/5 rounded border border-amber-500/10">
+            <div className="text-[10px] font-bold text-amber-400">{allStats.Maintenance}</div>
+            <div className="text-[7px] text-slate-400 font-medium font-mono uppercase">Maint</div>
+          </div>
+        </div>
+
+        {/* Dropdown Filters & Sorting Control Menu */}
+        <div className="grid grid-cols-2 gap-2 mb-2 bg-slate-950/30 p-2 rounded-xl border border-slate-900/40">
+          <div className="flex flex-col space-y-0.5">
+            <label className="text-[7.5px] font-mono text-slate-500 uppercase tracking-wider font-bold">Cluster</label>
+            <select
+              value={selectedCluster}
+              onChange={(e) => setSelectedCluster(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 text-slate-300 rounded px-1.5 py-0.5 text-[8.5px] font-mono focus:outline-none focus:border-indigo-500"
+            >
+              <option value="All Clusters">All Clusters</option>
+              <option value="cluster-prod-1">prod-1</option>
+              <option value="cluster-db-primary">db-primary</option>
+              <option value="cluster-k8s-billing">k8s-billing</option>
+              <option value="cluster-comms-edge">comms-edge</option>
+              <option value="cluster-analytics-core">analytics</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col space-y-0.5">
+            <label className="text-[7.5px] font-mono text-slate-500 uppercase tracking-wider font-bold">Sort By</label>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="w-full bg-slate-950 border border-slate-800 text-slate-300 rounded px-1.5 py-0.5 text-[8.5px] font-mono focus:outline-none focus:border-indigo-500"
+            >
+              <option value="Name">Name</option>
+              <option value="Status">Status</option>
+              <option value="Efficiency">Efficiency</option>
+              <option value="Load">Load</option>
+            </select>
+          </div>
+        </div>
+
         {/* Telemetry Control Panel */}
-        <div className="mb-3 bg-slate-950/80 border border-slate-900 rounded-xl p-3 space-y-3">
+        <div className="mb-2 bg-slate-950/80 border border-slate-900 rounded-xl p-2.5 space-y-2.5">
           {/* 1. Auto-Scale Toggle */}
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <Icons.Zap className={`h-3.5 w-3.5 transition-all ${isAutoScaling ? 'text-amber-400 animate-bounce' : 'text-slate-500'}`} />
               <div>
-                <div className="font-bold text-white text-[10px] uppercase tracking-wider">Auto-Scale</div>
-                <div className="text-[8px] text-slate-500 font-mono">Load-based auto-scaler</div>
+                <div className="font-bold text-white text-[9px] uppercase tracking-wider">Auto-Scale</div>
+                <div className="text-[7.5px] text-slate-500 font-mono">Load-based auto-scaler</div>
               </div>
             </div>
             <button
@@ -458,12 +804,12 @@ export default function AgentOrchestrator({ modelSelection }: AgentOrchestratorP
           </div>
 
           {/* 2. Live Data Polling Toggle */}
-          <div className="flex items-center justify-between border-t border-slate-900/60 pt-2.5">
+          <div className="flex items-center justify-between border-t border-slate-900/60 pt-2 flex-wrap gap-1">
             <div className="flex items-center space-x-2">
               <Icons.Radio className={`h-3.5 w-3.5 transition-all ${isLiveDataEnabled ? 'text-emerald-400 animate-pulse' : 'text-slate-500'}`} />
               <div>
-                <div className="font-bold text-white text-[10px] uppercase tracking-wider">Live Polling</div>
-                <div className="text-[8px] text-slate-500 font-mono">Poll backend (every 5s)</div>
+                <div className="font-bold text-white text-[9px] uppercase tracking-wider">Live Polling</div>
+                <div className="text-[7.5px] text-slate-500 font-mono">Poll backend (every 5s)</div>
               </div>
             </div>
             <button
@@ -482,7 +828,7 @@ export default function AgentOrchestrator({ modelSelection }: AgentOrchestratorP
           </div>
 
           {/* 3. Download Snapshot Button */}
-          <div className="border-t border-slate-900/60 pt-2.5">
+          <div className="border-t border-slate-900/60 pt-2">
             <button
               type="button"
               onClick={handleDownloadSnapshot}
@@ -507,34 +853,76 @@ export default function AgentOrchestrator({ modelSelection }: AgentOrchestratorP
           )}
 
           {isAutoScaling && !isLiveDataEnabled && (
-            <div className="mt-2 border-t border-slate-900 pt-1.5 text-[8.5px] font-mono text-amber-400 leading-normal flex items-start space-x-1 animate-pulse">
+            <div className="mt-1 border-t border-slate-900 pt-1 text-[8px] font-mono text-amber-400 leading-normal flex items-start space-x-1 animate-pulse">
               <span className="font-bold">●</span>
               <span>Metric Trigger: High-Frequency Transaction Pools (+26% cap)</span>
             </div>
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-          {agents.map((agt) => {
+        <div className="flex-1 overflow-y-auto space-y-2 pr-1 relative">
+          {getFilteredAndSortedAgents().map((agt) => {
             const isSelected = agt.id === selectedAgent.id;
+            const isChecked = selectedAgentIds.includes(agt.id);
             const modeInfo = getAgentOperatingMode(agt.id);
             const scaleFactor = getAgentScaleFactor(agt.id, isAutoScaling);
+            const isHighPriorityAgent = ['agt_root_cause', 'agt_incident', 'agt_database', 'agt_k8s'].includes(agt.id);
             return (
-              <button
+              <div
                 key={agt.id}
-                onClick={() => selectAgent(agt)}
-                className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 transition-all text-left border.5 cursor-pointer relative group/agent ${
+                onClick={() => {
+                  selectAgent(agt);
+                  setDrawerAgent(agt); // Open beautiful side drawer for specific agent metrics
+                }}
+                className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 transition-all text-left border cursor-pointer relative group/agent ${
                   isSelected 
                     ? 'bg-indigo-600/20 border-indigo-500/40 text-white shadow-md shadow-indigo-500/5' 
-                    : 'border-slate-800/60 bg-slate-900/30 text-slate-300 hover:bg-slate-900/60 hover:border-slate-800/80'
+                    : isHighPriorityAgent
+                      ? 'border-rose-500/20 bg-rose-950/5 text-slate-300 hover:bg-slate-900/60 hover:border-slate-800/80 shadow-[0_0_8px_rgba(239,68,68,0.06)]'
+                      : 'border-slate-800/60 bg-slate-900/30 text-slate-300 hover:bg-slate-900/60 hover:border-slate-800/80'
                 }`}
               >
-                <div className="flex items-center space-x-2.5">
-                  <div className={`${isSelected ? 'text-indigo-400' : 'text-slate-500'}`}>
+                <div className="flex items-center space-x-2">
+                  {/* Multiselect Checkbox */}
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation(); // Avoid selecting card or opening drawer
+                      if (isChecked) {
+                        setSelectedAgentIds(prev => prev.filter(id => id !== agt.id));
+                      } else {
+                        setSelectedAgentIds(prev => [...prev, agt.id]);
+                      }
+                    }}
+                    className="flex items-center justify-center p-0.5 cursor-pointer shrink-0 z-10"
+                    title="Toggle Multi-Select"
+                  >
+                    <div className={`h-3.5 w-3.5 rounded border flex items-center justify-center transition-all ${
+                      isChecked 
+                        ? 'bg-indigo-600 border-indigo-500 text-white' 
+                        : 'border-slate-700 bg-slate-950 hover:border-slate-500'
+                    }`}>
+                      {isChecked && <Icons.Check className="h-2.5 w-2.5 stroke-[3]" />}
+                    </div>
+                  </div>
+
+                  <div className={`relative ${isSelected ? 'text-indigo-400' : isHighPriorityAgent ? 'text-rose-400' : 'text-slate-500'}`}>
                     {getAgentIcon(agt.icon)}
+                    {isHighPriorityAgent && (
+                      <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+                      </span>
+                    )}
                   </div>
                   <div>
-                    <div className="font-bold text-white text-xs">{agt.name}</div>
+                    <div className="flex items-center space-x-1.5 flex-wrap">
+                      <div className="font-bold text-white text-xs">{agt.name}</div>
+                      {isHighPriorityAgent && (
+                        <span className="inline-flex items-center rounded bg-rose-500/10 px-1 py-0.5 text-[7px] font-bold text-rose-400 border border-rose-500/15 animate-pulse shrink-0 tracking-wide">
+                          IN FLIGHT
+                        </span>
+                      )}
+                    </div>
                     <div className="text-[10px] text-slate-400 line-clamp-1">{agt.role}</div>
                     
                     {/* Operating Mode Pill with Interactive Tooltip & Optional Scale Badge */}
@@ -571,10 +959,222 @@ export default function AgentOrchestrator({ modelSelection }: AgentOrchestratorP
                     <span className="text-[9px] text-slate-500 font-mono font-medium">L{agt.id.includes('support') ? '1' : agt.id.includes('incident') ? '2' : '3'}</span>
                   </div>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
+
+        {/* Bulk Action Bottom Bar (Floating Persistent Alert) */}
+        <AnimatePresence>
+          {selectedAgentIds.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 50 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 50 }}
+              className="mt-2 bg-slate-950 border border-slate-800 rounded-xl p-3 shadow-2xl space-y-2.5 z-20 shrink-0"
+            >
+              <div className="flex items-center justify-between text-[10px] font-mono text-slate-300 border-b border-slate-900 pb-1.5">
+                <span className="flex items-center space-x-1">
+                  <span className="h-1.5 w-1.5 bg-indigo-500 rounded-full animate-ping" />
+                  <span className="font-bold text-indigo-400">{selectedAgentIds.length}</span>
+                  <span>Agents Selected</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedAgentIds([])}
+                  className="text-slate-500 hover:text-slate-300 hover:underline"
+                >
+                  Clear Selection
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleBulkOperation('RESTART')}
+                  className="rounded bg-slate-900 hover:bg-indigo-600/20 hover:text-white border border-slate-800 hover:border-indigo-500 text-slate-300 font-mono text-[9px] font-bold py-1.5 flex items-center justify-center space-x-1 transition-all cursor-pointer"
+                >
+                  <Icons.RefreshCw className="h-3 w-3 text-indigo-400" />
+                  <span>Restart Selected</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleBulkOperation('DRAIN')}
+                  className="rounded bg-slate-900 hover:bg-rose-600/20 hover:text-white border border-slate-800 hover:border-rose-500 text-slate-300 font-mono text-[9px] font-bold py-1.5 flex items-center justify-center space-x-1 transition-all cursor-pointer"
+                >
+                  <Icons.Flame className="h-3 w-3 text-rose-400" />
+                  <span>Drain Traffic</span>
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* SIDE DRAWER COMPONENT */}
+        <AnimatePresence>
+          {drawerAgent && (
+            <div className="fixed inset-0 z-50 overflow-hidden flex justify-end">
+              {/* Backdrop blur overlay */}
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setDrawerAgent(null)}
+                className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm cursor-pointer"
+              />
+
+              {/* Drawer Container */}
+              <motion.div
+                initial={{ x: '100%' }}
+                animate={{ x: 0 }}
+                exit={{ x: '100%' }}
+                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                className="relative w-full max-w-md bg-slate-900 border-l border-slate-800 p-6 shadow-2xl h-full flex flex-col justify-between overflow-y-auto"
+              >
+                <div>
+                  {/* Header */}
+                  <div className="flex items-center justify-between mb-6 border-b border-slate-800 pb-4">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2 bg-indigo-500/10 rounded-xl text-indigo-400 border border-indigo-500/20">
+                        {getAgentIcon(drawerAgent.icon)}
+                      </div>
+                      <div>
+                        <h4 className="font-display font-bold text-sm text-white">{drawerAgent.name}</h4>
+                        <p className="text-[10px] text-slate-400 font-mono uppercase tracking-wider">{getAgentCluster(drawerAgent.id)}</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setDrawerAgent(null)}
+                      className="p-1.5 rounded-lg bg-slate-800/50 text-slate-400 hover:text-white hover:bg-slate-800 transition-all cursor-pointer"
+                    >
+                      <Icons.X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {/* Role and Objectives */}
+                  <div className="space-y-4 mb-6">
+                    <div>
+                      <span className="text-[9px] font-mono text-slate-500 uppercase tracking-wider block mb-1">Agent Role</span>
+                      <p className="text-slate-300 leading-relaxed font-sans text-[11px] bg-slate-950/40 p-2.5 rounded-lg border border-slate-900">{drawerAgent.role}</p>
+                    </div>
+
+                    {/* Resources (CPU/RAM) */}
+                    <div>
+                      <span className="text-[9px] font-mono text-slate-500 uppercase tracking-wider block mb-2">Current Resource Utilization</span>
+                      <div className="bg-slate-950/60 border border-slate-900 p-3.5 rounded-xl space-y-3">
+                        {/* CPU */}
+                        <div>
+                          <div className="flex justify-between text-[10px] font-mono mb-1">
+                            <span className="text-slate-400">CPU Usage</span>
+                            <span className="text-indigo-400 font-bold">{getAgentLoad(drawerAgent)}%</span>
+                          </div>
+                          <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                            <div 
+                              className="bg-indigo-500 h-full rounded-full transition-all duration-500" 
+                              style={{ width: `${getAgentLoad(drawerAgent)}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* RAM */}
+                        <div>
+                          <div className="flex justify-between text-[10px] font-mono mb-1">
+                            <span className="text-slate-400">RAM Overhead</span>
+                            <span className="text-emerald-400 font-bold">{128 + (drawerAgent.name.length * 13) % 256} MB / 512 MB</span>
+                          </div>
+                          <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                            <div 
+                              className="bg-emerald-500 h-full rounded-full transition-all duration-500" 
+                              style={{ width: `${((128 + (drawerAgent.name.length * 13) % 256) / 512) * 100}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Recent Incident Correlation Events */}
+                    <div>
+                      <span className="text-[9px] font-mono text-slate-500 uppercase tracking-wider block mb-2">Incident Correlation Timeline</span>
+                      <div className="space-y-2">
+                        {getAgentEvents(drawerAgent.id).map((evt, idx) => (
+                          <div key={idx} className="flex items-start space-x-2.5 bg-slate-950/40 border border-slate-900 rounded-lg p-2.5">
+                            <div className={`mt-0.5 px-1 py-0.5 rounded text-[7px] font-mono font-bold shrink-0 ${
+                              evt.severity === 'CRITICAL' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' :
+                              evt.severity === 'HIGH' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
+                              evt.severity === 'MEDIUM' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
+                              'bg-slate-500/10 text-slate-400 border border-slate-500/20'
+                            }`}>
+                              {evt.id}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[10px] text-white font-bold truncate">{evt.title}</div>
+                              <div className="text-[8.5px] text-slate-500 font-mono uppercase mt-0.5">Severity: {evt.severity} • Correlation Status: SLA_ACTIVE</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Detailed Logs (Terminal) */}
+                    <div>
+                      <span className="text-[9px] font-mono text-slate-500 uppercase tracking-wider block mb-2">Detailed Telemetry Log Feed</span>
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+                        className="overflow-hidden"
+                      >
+                        <div className="font-mono text-[9px] bg-black/80 p-3 rounded-lg border border-slate-800 text-emerald-400/90 max-h-48 overflow-y-auto space-y-1.5 leading-relaxed scrollbar-thin scrollbar-thumb-slate-800">
+                          {getAgentLogs(drawerAgent.id).map((log, idx) => (
+                            <motion.div
+                              key={idx}
+                              initial={{ opacity: 0, y: 6 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: idx * 0.05, duration: 0.25 }}
+                              className="flex space-x-2"
+                            >
+                              <span className="text-slate-600 shrink-0">[{log.time}]</span>
+                              <span className="break-all">{log.text}</span>
+                            </motion.div>
+                          ))}
+                        </div>
+                      </motion.div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer Action */}
+                <div className="border-t border-slate-800 pt-4 flex space-x-3 shrink-0">
+                  <button
+                    onClick={() => {
+                      setAgents(prev => prev.map(a => {
+                        if (a.id === drawerAgent.id) {
+                          return {
+                            ...a,
+                            metrics: {
+                              ...a.metrics,
+                              avgEfficiency: Math.min(100, Math.round(92 + Math.random() * 8)),
+                              avgResponseTimeMs: Math.max(50, Math.round(100 + Math.random() * 50)),
+                              successfulRuns: (a.metrics?.successfulRuns || 0) + 1,
+                            } as any
+                          };
+                        }
+                        return a;
+                      }));
+                      window.dispatchEvent(new CustomEvent('show-toast', {
+                        detail: { message: `Successfully recalibrated ${drawerAgent.name} connection pools!` }
+                      }));
+                    }}
+                    className="flex-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-[10px] font-bold py-2 flex items-center justify-center space-x-1.5 transition-all cursor-pointer shadow-md shadow-indigo-500/10"
+                  >
+                    <Icons.RefreshCw className="h-3.5 w-3.5" />
+                    <span>Recalibrate Connection Pools</span>
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* 2. CHAT AND CO-LAB WORKSPACE (Middle) */}
@@ -735,6 +1335,23 @@ export default function AgentOrchestrator({ modelSelection }: AgentOrchestratorP
             {benchmarkingMode === 'efficiency' 
               ? 'Hourly visual matrix mapping task load, response speed, and operational accuracy:' 
               : 'Hourly visual matrix mapping model execution cost and container memory overhead footprint:'}
+          </div>
+
+          {/* Real-time D3-based Sparkline section */}
+          <div className="flex items-center justify-between bg-slate-950/60 p-2.5 border border-slate-900 rounded-xl">
+            <div>
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">15-Min Efficiency Sparkline</span>
+              <span className="text-[8px] text-slate-500 font-mono">Rolling averages (past 3h)</span>
+            </div>
+            <div className="flex items-center space-x-3 bg-slate-950/40 px-2 py-1 rounded-lg border border-slate-900/40">
+              <Sparkline data={sparklineData} />
+              <div className="text-right">
+                <span className="text-[8px] text-slate-500 font-mono uppercase block leading-none mb-0.5">CURRENT</span>
+                <span className="font-mono text-xs font-bold text-indigo-400">
+                  {sparklineData.length > 0 ? sparklineData[sparklineData.length - 1] : 95}%
+                </span>
+              </div>
+            </div>
           </div>
 
           {/* Heatmap Status Filter Chips */}

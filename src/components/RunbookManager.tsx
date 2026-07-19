@@ -13,6 +13,41 @@ export default function RunbookManager({ modelSelection, onAddAuditLog }: Runboo
   const [selectedArticle, setSelectedArticle] = useState<KBArticle>(InitialKBArticles[0]);
   const [search, setSearch] = useState('');
 
+  // Batch Revert tracking states
+  const [appliedRemediations, setAppliedRemediations] = useState([
+    { id: 'rem-01', agent: 'L1-Triage-Alpha', step: 'Flushed Redis Query Buffers', target: 'redis-node-2', timestamp: '10 mins ago' },
+    { id: 'rem-02', agent: 'L2-Db-Expert', step: 'Terminated Deadlocked PG Backend ID 4059', target: 'pg-leader-0', timestamp: '8 mins ago' },
+    { id: 'rem-03', agent: 'L1-Network-Triage', step: 'Throttled Ingress Rate Limit (300 req/s)', target: 'ingress-01', timestamp: '5 mins ago' },
+    { id: 'rem-04', agent: 'L2-Kube-Scheduler', step: 'Restarted Web Server Pod (Replica A)', target: 'web-prod-9a', timestamp: '2 mins ago' }
+  ]);
+  const [showRevertModal, setShowRevertModal] = useState(false);
+  const [isReverting, setIsReverting] = useState(false);
+
+  const handleExecuteBatchRevert = async () => {
+    if (isReverting) return;
+    setIsReverting(true);
+    
+    // Simulate multi-node remote orchestration
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    // Audit and notify
+    onAddAuditLog(
+      "Eshan Barua (CTO)",
+      "BATCH REVERT REMEDIATION",
+      "Support Matrix",
+      "SUCCESS",
+      `Executed batch rollback on ${appliedRemediations.length} active agent hooks. Nodes reverted: redis-node-2, pg-leader-0, ingress-01, web-prod-9a`
+    );
+
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `Batch rollback successful! Reverted ${appliedRemediations.length} agent operational changes.` }
+    }));
+
+    setAppliedRemediations([]);
+    setIsReverting(false);
+    setShowRevertModal(false);
+  };
+
   React.useEffect(() => {
     const handleSelect = (e: Event) => {
       const customEvent = e as CustomEvent;
@@ -241,6 +276,45 @@ export default function RunbookManager({ modelSelection, onAddAuditLog }: Runboo
           </div>
         </div>
 
+        {/* ACTIVE REMEDIATION HISTORY & BATCH REVERT UTILITY */}
+        <div className="bg-slate-950/60 border-b border-slate-800 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center space-x-2">
+              <span className="rounded bg-rose-500/15 px-2 py-0.5 font-mono text-[8.5px] font-bold text-rose-400 border border-rose-500/30 uppercase tracking-wider">
+                remediation tracking pool
+              </span>
+              <span className="text-[9px] font-mono text-slate-500">cluster-prod-1</span>
+            </div>
+            <h3 className="font-display font-bold text-xs text-slate-200">Active Remediation Transaction Pool</h3>
+            <p className="text-[10px] text-slate-400 leading-snug">
+              {appliedRemediations.length > 0 ? (
+                <>
+                  There are <span className="text-rose-400 font-bold">{appliedRemediations.length} active cluster remediation hooks</span> applied by L1/L2 Copilots across multiple namespace node pools.
+                </>
+              ) : (
+                <span className="text-slate-500 italic">No recently applied remediation changes in active buffer. System state synchronized.</span>
+              )}
+            </p>
+          </div>
+          
+          <button
+            onClick={() => {
+              if (appliedRemediations.length > 0) {
+                setShowRevertModal(true);
+              }
+            }}
+            disabled={appliedRemediations.length === 0}
+            className={`shrink-0 rounded-lg border px-3.5 py-2 font-bold transition-all flex items-center space-x-2 text-xxs ${
+              appliedRemediations.length > 0
+                ? 'bg-rose-500/10 text-rose-400 border-rose-500/35 hover:bg-rose-600 hover:text-white cursor-pointer hover:shadow-lg hover:shadow-rose-500/10 active:scale-95'
+                : 'bg-slate-900/50 text-slate-600 border-slate-800/80 cursor-not-allowed opacity-55'
+            }`}
+          >
+            <Icons.Undo2 className="h-3.5 w-3.5" />
+            <span>Batch Revert Hooks ({appliedRemediations.length})</span>
+          </button>
+        </div>
+
         {/* Markdown Render Area */}
         <div className="flex-1 overflow-y-auto p-6 bg-slate-950/20 select-text">
           <div className="max-w-3xl mx-auto space-y-3 prose prose-invert font-sans text-xs">
@@ -336,6 +410,87 @@ export default function RunbookManager({ modelSelection, onAddAuditLog }: Runboo
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* BATCH REVERT CONFIRMATION MODAL */}
+      {showRevertModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-950 p-6 shadow-2xl relative overflow-hidden">
+            <div className="absolute -top-12 left-1/2 -translate-x-1/2 w-48 h-48 rounded-full bg-rose-500/10 blur-3xl" />
+            
+            <div className="relative flex items-center space-x-3 border-b border-slate-900 pb-4 mb-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400">
+                <Icons.Undo2 className="h-5 w-5" />
+              </div>
+              <div>
+                <h4 className="font-display font-bold text-sm text-white uppercase tracking-wider">Confirm Batch Remediation Revert</h4>
+                <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">SupportPilot Rollback Manager</p>
+              </div>
+            </div>
+
+            <p className="text-xxs text-slate-400 mb-4 leading-relaxed">
+              You are about to initiate a synchronized rollback of all applied remediation steps in the current transaction pool. This will undo active cluster changes and trigger agent telemetry adjustments.
+            </p>
+
+            <div className="space-y-2 max-h-[180px] overflow-y-auto bg-slate-900/40 border border-slate-900 rounded-xl p-3 mb-5 font-mono text-[10px]">
+              <div className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-2 border-b border-slate-900 pb-1 flex justify-between">
+                <span>REMEDIATION ITEM TO REVERT</span>
+                <span>TARGET NODE</span>
+              </div>
+              {appliedRemediations.map((item) => (
+                <div key={item.id} className="flex items-start justify-between border-b border-slate-900/50 pb-2 last:border-0 last:pb-0">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center space-x-1.5">
+                      <span className="text-[8px] bg-slate-800 text-slate-400 px-1.5 rounded">{item.agent}</span>
+                      <span className="font-bold text-rose-400">{item.step}</span>
+                    </div>
+                    <span className="text-[9px] text-slate-500">{item.timestamp}</span>
+                  </div>
+                  <span className="font-bold text-slate-300 text-right bg-slate-950 px-2 py-0.5 rounded border border-slate-900 shrink-0">
+                    {item.target}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-xl border border-rose-500/10 bg-rose-500/5 p-4 mb-6 text-xxs text-rose-400/90 leading-relaxed flex items-start space-x-2.5">
+              <Icons.AlertTriangle className="h-4.5 w-4.5 shrink-0 text-rose-400 mt-0.5" />
+              <div className="space-y-1">
+                <span className="font-bold uppercase tracking-wider block">Critical Operator Alert</span>
+                <span>Rollback processes are server-authoritative and will directly influence remote ingress gateway rules, database isolation tables, and background worker threads.</span>
+              </div>
+            </div>
+
+            <div className="flex space-x-3">
+              <button
+                type="button"
+                onClick={() => setShowRevertModal(false)}
+                disabled={isReverting}
+                className="flex-1 py-3 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 rounded-xl text-xxs font-bold uppercase tracking-wider cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteBatchRevert}
+                disabled={isReverting}
+                className="flex-1 py-3 bg-rose-600 hover:bg-rose-500 disabled:opacity-45 text-white rounded-xl text-xxs font-bold uppercase tracking-wider cursor-pointer shadow-lg shadow-rose-600/10 transition-colors flex items-center justify-center space-x-1.5"
+              >
+                {isReverting ? (
+                  <>
+                    <Icons.Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Executing Rollback...</span>
+                  </>
+                ) : (
+                  <>
+                    <Icons.ShieldCheck className="h-4 w-4" />
+                    <span>Confirm Rollback</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

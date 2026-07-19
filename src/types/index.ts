@@ -112,6 +112,7 @@ export interface Incident {
   analysis?: AIAnalysis;
   automaticReply?: string;
   csatScore?: number;
+  lastModifiedBy?: string;
 }
 
 export interface SupportAgent {

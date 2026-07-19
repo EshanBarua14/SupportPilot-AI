@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActiveUser } from '../data/simulation';
 import * as Icons from 'lucide-react';
+import { useSupportPilot } from '../context/SupportPilotContext';
 
 interface SettingsConsoleProps {
   modelSelection: string;
@@ -11,6 +12,45 @@ interface SettingsConsoleProps {
 
 export default function SettingsConsole({ modelSelection, onSetModelSelection, theme, onSetTheme }: SettingsConsoleProps) {
   const user = ActiveUser;
+  const { uiDensity, setUiDensity } = useSupportPilot();
+
+  const [infraEvents, setInfraEvents] = React.useState<Array<{ id: string; time: string; type: string; msg: string; level: 'info' | 'warn' | 'crit' }>>([
+    { id: 'ev1', time: '14:02:11', type: 'Kubernetes', msg: "Auto-scaling trigger activated: scaled node pool 'prod-compute-3' from 4 to 6 nodes due to high telemetry queue depth.", level: 'info' },
+    { id: 'ev2', time: '14:04:15', type: 'ArgoCD', msg: "Deployment status changed: 'billing-v2-api' successfully promoted to blue-green canary slot.", level: 'info' },
+    { id: 'ev3', time: '14:05:03', type: 'Telemetry', msg: "Critical CPU heat spike detected on 'ingress-routing-0': Core temperature 87C, throttled by governor.", level: 'crit' },
+    { id: 'ev4', time: '14:06:12', type: 'NOC Alert', msg: "Redis replication lag resolved on replica 'cache-west-2b'.", level: 'info' },
+    { id: 'ev5', time: '14:06:29', type: 'Kubernetes', msg: "HorizontalPodAutoscaler scaling up replica-set 'support-router-v1' to 5 pods.", level: 'info' }
+  ]);
+
+  React.useEffect(() => {
+    const templates = [
+      { type: 'Kubernetes', level: 'info', msg: "Pod 'triage-helper-84fd5' successfully scheduled on node 'gke-prod-pool-2'." },
+      { type: 'ArgoCD', level: 'info', msg: "Desynchronized manifest reconciled: ConfigMap 'env-configs' synced successfully." },
+      { type: 'Telemetry', level: 'warn', msg: "Disk I/O warning: Write latency on 'psql-primary-disk' exceeded 12ms threshold." },
+      { type: 'Gateway', level: 'info', msg: "Ingress proxy successfully refreshed Envoy SSL certificate mappings for *.supportpilot.com." },
+      { type: 'Autoscaler', level: 'info', msg: "HorizontalPodAutoscaler completed cool-down sweep: scaled down 'ocr-worker-pool' to 1 instance." },
+      { type: 'Hardware', level: 'crit', msg: "ECC memory single-bit error corrected on server node 'baremetal-04a' (DIMM_A2)." }
+    ];
+
+    const timer = setInterval(() => {
+      const now = new Date();
+      const timeStr = now.toTimeString().split(' ')[0];
+      const randomTpl = templates[Math.floor(Math.random() * templates.length)];
+      
+      setInfraEvents(prev => [
+        {
+          id: `ev-${Date.now()}`,
+          time: timeStr,
+          type: randomTpl.type,
+          msg: randomTpl.msg,
+          level: randomTpl.level as any
+        },
+        ...prev
+      ]);
+    }, 10000);
+
+    return () => clearInterval(timer);
+  }, []);
 
   const models = [
     { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash", desc: "Optimal speed, high-fidelity L1/L2 triage, and rapid distributed trace searches." },
@@ -150,6 +190,43 @@ export default function SettingsConsole({ modelSelection, onSetModelSelection, t
           </div>
         </div>
 
+        {/* UI Layout Density Settings */}
+        <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
+          <h3 className="mb-2.5 font-display font-bold text-xs text-indigo-400 uppercase tracking-wider flex items-center space-x-1.5 border-b border-slate-800 pb-2">
+            <Icons.LayoutGrid className="h-4 w-4 text-indigo-400" />
+            <span>UI Layout Density Configuration</span>
+          </h3>
+          <p className="text-xxs text-slate-400 mb-3.5 leading-relaxed">
+            Select your preferred interface layout density. Compact increases information density for expert operations. Spacious provides generous breathing room.
+          </p>
+
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              onClick={() => setUiDensity('compact')}
+              className={`flex items-center space-x-2 rounded-lg p-2.5 border transition-all cursor-pointer ${
+                uiDensity === 'compact'
+                  ? 'bg-indigo-600/20 border-indigo-500/80 text-white font-bold'
+                  : 'bg-slate-900/50 border-slate-800/80 text-slate-400 hover:bg-slate-800/30'
+              }`}
+            >
+              <Icons.Menu className="h-3.5 w-3.5 text-slate-400" />
+              <span className="text-xxs">Compact (High Info)</span>
+            </button>
+
+            <button
+              onClick={() => setUiDensity('spacious')}
+              className={`flex items-center space-x-2 rounded-lg p-2.5 border transition-all cursor-pointer ${
+                uiDensity === 'spacious'
+                  ? 'bg-indigo-600/20 border-indigo-500/80 text-white font-bold'
+                  : 'bg-slate-900/50 border-slate-800/80 text-slate-400 hover:bg-slate-800/30'
+              }`}
+            >
+              <Icons.LayoutList className="h-3.5 w-3.5 text-slate-400" />
+              <span className="text-xxs">Spacious (Readable)</span>
+            </button>
+          </div>
+        </div>
+
         {/* User profile parameters */}
         <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
           <h3 className="mb-3 font-display font-bold text-xs text-indigo-400 uppercase tracking-wider flex items-center space-x-1.5 border-b border-slate-800 pb-2">
@@ -234,6 +311,49 @@ export default function SettingsConsole({ modelSelection, onSetModelSelection, t
             <div>Tenant Isolation Level: <span className="text-white">Strict Row level Multi-Tenancy</span></div>
             <div>SLA Liability Threshold: <span className="text-emerald-400 font-bold">99.95% Guaranteed</span></div>
             <div>Support Desk Seats: <span className="text-white">Unlimited (Active: 19 agent modules)</span></div>
+          </div>
+        </div>
+
+        {/* Real-time System Activity Feed */}
+        <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4 flex flex-col h-[280px]">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-2.5">
+            <h3 className="font-display font-bold text-xs text-indigo-400 uppercase tracking-wider flex items-center space-x-1.5">
+              <Icons.Activity className="h-4 w-4 text-emerald-400" />
+              <span>System Activity Ingress</span>
+            </h3>
+            <span className="flex items-center space-x-1 font-mono text-[8px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>LIVE KUBE STREAM</span>
+            </span>
+          </div>
+          
+          <p className="text-xxs text-slate-400 mb-2.5 leading-relaxed">
+            Real-time feed of underlying cloud infrastructure events, resource triggers, pod configurations, and scheduler states.
+          </p>
+
+          <div className="flex-1 overflow-y-auto font-mono text-[10px] space-y-2 bg-black/50 p-3 rounded-lg border border-slate-900 scrollbar-thin scrollbar-thumb-slate-800">
+            {infraEvents.map((evt) => {
+              let levelColor = 'text-slate-400';
+              let badgeBg = 'bg-slate-800 text-slate-400';
+              if (evt.level === 'warn') {
+                levelColor = 'text-amber-400/90';
+                badgeBg = 'bg-amber-500/10 border border-amber-500/20 text-amber-400';
+              } else if (evt.level === 'crit') {
+                levelColor = 'text-rose-400/90';
+                badgeBg = 'bg-rose-500/15 border border-rose-500/30 text-rose-400';
+              }
+              return (
+                <div key={evt.id} className="border-b border-slate-900/40 pb-1.5 last:border-0 last:pb-0">
+                  <div className="flex items-center justify-between text-[9px] mb-1">
+                    <span className="text-slate-500 font-bold">[{evt.time}]</span>
+                    <span className={`px-1 rounded text-[8px] font-bold uppercase ${badgeBg}`}>
+                      {evt.type}
+                    </span>
+                  </div>
+                  <p className={`leading-normal ${levelColor}`}>{evt.msg}</p>
+                </div>
+              );
+            })}
           </div>
         </div>
 
