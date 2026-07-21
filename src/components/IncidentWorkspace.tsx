@@ -3,10 +3,71 @@ import { Incident, LogEntry, TimelineEvent, Tenant } from '../types';
 import { InitialIncidents, SeedTenants } from '../data/simulation';
 import * as Icons from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
+import { ComposedChart, Bar, Line, Brush, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
 import IncidentDetailsDrawer from './IncidentDetailsDrawer';
 import IncidentDependencyGraph from './IncidentDependencyGraph';
 import { jsPDF } from 'jspdf';
+import IncidentSummary from './IncidentSummary';
+
+export const calculateSentimentScore = (incident: Incident): { score: number; label: string; color: string } => {
+  let score = 70; // Base sentiment score (out of 100, where 100 is happy/neutral, and <50 is frustrated/angry)
+  
+  const textToAnalyze = (incident.description + " " + incident.title + " " + (incident.customerProfile || "")).toLowerCase();
+  
+  // Severe frustration triggers
+  if (textToAnalyze.includes("unacceptable") || textToAnalyze.includes("terrible") || textToAnalyze.includes("furious") || textToAnalyze.includes("angry")) score -= 35;
+  if (textToAnalyze.includes("frustrated") || textToAnalyze.includes("broken") || textToAnalyze.includes("down") || textToAnalyze.includes("failing")) score -= 15;
+  if (textToAnalyze.includes("urgent") || textToAnalyze.includes("asap") || textToAnalyze.includes("immediate") || textToAnalyze.includes("sla")) score -= 15;
+  if (textToAnalyze.includes("blocking") || textToAnalyze.includes("critical") || textToAnalyze.includes("crashed")) score -= 10;
+  if (textToAnalyze.includes("error") || textToAnalyze.includes("fail") || textToAnalyze.includes("failed")) score -= 5;
+  
+  // Analyze log entries as well for error/fatal ratios
+  const logs = incident.logs || [];
+  const errorLogs = logs.filter(l => l.level === 'ERROR' || l.level === 'FATAL').length;
+  if (errorLogs > 3) {
+    score -= 15;
+  } else if (errorLogs > 0) {
+    score -= 5;
+  }
+  
+  // Solved tickets restore sentiment
+  if (incident.status === 'SOLVED') {
+    score = Math.min(100, score + 40);
+  }
+  
+  // Clamp score
+  score = Math.max(10, Math.min(100, score));
+  
+  // Map score to label/color
+  if (score < 40) {
+    return { score, label: "Critical Frustration", color: "text-rose-400 bg-rose-500/10 border-rose-500/20" };
+  } else if (score < 65) {
+    return { score, label: "Agitated", color: "text-amber-400 bg-amber-500/10 border-amber-500/20" };
+  } else if (score < 85) {
+    return { score, label: "Neutral / Concerned", color: "text-indigo-400 bg-indigo-500/10 border-indigo-500/20" };
+  } else {
+    return { score, label: "Satisfied / Restored", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" };
+  }
+};
+
+const REPLY_TEMPLATES = [
+  {
+    name: "Acknowledgment & Initial Triage",
+    text: "Hi there, thank you for reaching out. We have detected anomalous behavior affecting your workspace and have raised a high-priority ticket. Our on-call engineering squad is actively diagnosing the root cause. We will provide updates here every 15 minutes as we work toward mitigation. Thank you for your patience."
+  },
+  {
+    name: "Mitigation & Hotfix Deployment",
+    text: "Hello, our engineering team has isolated the issue to a microservice degradation. We are currently executing remediation actions and deploying a hotfix. Services should begin recovering shortly. We are monitoring live telemetry closely to ensure stable transaction paths. Another update will follow in 10 minutes."
+  },
+  {
+    name: "Complete Service Restoration",
+    text: "Greetings, we are pleased to report that the underlying infrastructure issue has been successfully resolved and full service has been restored. All health checks are now green, and system latency has returned to baseline levels. We will keep this ticket open for a brief observation period to ensure absolute stability. Please let us know if you experience any further discrepancies."
+  },
+  {
+    name: "Detailed Root Cause & Post-Mortem",
+    text: "Thank you for your patience. The incident has been mitigated. The root cause was identified as memory heap exhaustion under an unexpected payload spike, resulting in an OOM termination. We have scaled our container resources, adjusted the garbage collection thresholds, and updated our alert configurations. A formal post-mortem document will be shared with your account team. Thank you."
+  }
+];
 
 const historicalSeverityData = [
   { name: 'Feb', P0: 4, P1: 12, P2: 24, P3: 45 },
@@ -191,6 +252,8 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
 
   const [copiedId, setCopiedId] = useState(false);
   const [severityFilter, setSeverityFilter] = useState<'ALL' | 'P0' | 'P1' | 'P2' | 'P3'>('ALL');
+  const [assigneeFilter, setAssigneeFilter] = useState<string>('ALL');
+  const [groupBy, setGroupBy] = useState<'NONE' | 'SERVICE' | 'PRIORITY' | 'AGENT'>('NONE');
   const [legendTimePeriod, setLegendTimePeriod] = useState<'7days' | '30days' | 'ytd'>('ytd');
   const [timePeriodFilter, setTimePeriodFilter] = useState<'ALL' | '7days' | '30days' | 'ytd'>('ALL');
 
@@ -224,7 +287,139 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
     targetIds: string[];
   } | null>(null);
   
+  const [isAutoRefreshActive, setIsAutoRefreshActive] = useState(false);
+  const [comparePrevious, setComparePrevious] = useState(false);
+
+  const [serviceFilter, setServiceFilter] = useState<string>('ALL');
+  const servicesList = Array.from(new Set(incidents.map(i => i.appName).filter(Boolean)));
+
+  interface SavedView {
+    id: string;
+    name: string;
+    assignee: string;
+    severity: 'ALL' | 'P0' | 'P1' | 'P2' | 'P3';
+    service: string;
+  }
+
+  const [savedViews, setSavedViews] = useState<SavedView[]>(() => {
+    const cached = localStorage.getItem('supportpilot_saved_views');
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch (e) {}
+    }
+    return [
+      { id: 'all-view', name: 'All Active Incidents', assignee: 'ALL', severity: 'ALL', service: 'ALL' },
+      { id: 'critical-billing', name: 'Critical Billing Outages', assignee: 'ALL', severity: 'P0', service: 'Billing Core' },
+      { id: 'gateway-congested', name: 'My Assigned P1 Blocks', assignee: 'Alex Rivera', severity: 'P1', service: 'ALL' },
+      { id: 'external-webhook-failures', name: 'Webhook Congestions', assignee: 'ALL', severity: 'ALL', service: 'External Webhooks Relay' }
+    ];
+  });
+  const [activeViewId, setActiveViewId] = useState<string>('all-view');
+  const [newViewName, setNewViewName] = useState<string>('');
+  const [isSavingView, setIsSavingView] = useState<boolean>(false);
+
+  const [isScratchpadOpen, setIsScratchpadOpen] = useState(false);
+  const [scratchpadText, setScratchpadText] = useState(() => {
+    return localStorage.getItem('supportpilot_scratchpad_findings') || '';
+  });
+
+  const handleUpdateScratchpad = (text: string) => {
+    setScratchpadText(text);
+    localStorage.setItem('supportpilot_scratchpad_findings', text);
+  };
+
+  const handleApplySavedView = (view: SavedView) => {
+    setActiveViewId(view.id);
+    setAssigneeFilter(view.assignee);
+    setSeverityFilter(view.severity);
+    setServiceFilter(view.service);
+  };
+
+  const handleSaveCurrentView = () => {
+    if (!newViewName.trim()) return;
+    const newView: SavedView = {
+      id: `view-${Date.now()}`,
+      name: newViewName.trim(),
+      assignee: assigneeFilter,
+      severity: severityFilter,
+      service: serviceFilter
+    };
+    const updated = [...savedViews, newView];
+    setSavedViews(updated);
+    localStorage.setItem('supportpilot_saved_views', JSON.stringify(updated));
+    setActiveViewId(newView.id);
+    setNewViewName('');
+    setIsSavingView(false);
+
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `Saved view "${newView.name}" created successfully.` }
+    }));
+  };
+
+  const handleDeleteSavedView = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (id === 'all-view') return;
+    const updated = savedViews.filter(v => v.id !== id);
+    setSavedViews(updated);
+    localStorage.setItem('supportpilot_saved_views', JSON.stringify(updated));
+    if (activeViewId === id) {
+      setActiveViewId('all-view');
+    }
+  };
+
+  useEffect(() => {
+    const matched = savedViews.find(v => 
+      v.assignee === assigneeFilter && 
+      v.severity === severityFilter && 
+      v.service === serviceFilter
+    );
+    if (matched) {
+      setActiveViewId(matched.id);
+    } else {
+      setActiveViewId('custom');
+    }
+  }, [assigneeFilter, severityFilter, serviceFilter, savedViews]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        setIsScratchpadOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (!isAutoRefreshActive) return;
+    const intervalId = setInterval(() => {
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: "Auto-refresh: SLA severity trend analytics updated." }
+      }));
+    }, 300000); // 5 minutes
+    return () => clearInterval(intervalId);
+  }, [isAutoRefreshActive]);
+
   const currentChartData = legendTrendData[legendTimePeriod];
+  const preparedChartData = currentChartData.map((d, index) => {
+    // Generate a comparative dataset representing prior period trendline
+    const prevTotal = Math.max(1, Math.round((d.P0 + d.P1 + d.P2 + d.P3) * (0.8 + (index % 4) * 0.1)));
+    
+    // Calculated moving average over neighboring values
+    const sliceStart = Math.max(0, index - 2);
+    const sliceEnd = index + 3;
+    const subset = currentChartData.slice(sliceStart, sliceEnd);
+    const subsetTotal = subset.reduce((acc, curr) => acc + curr.P0 + curr.P1 + curr.P2 + curr.P3, 0);
+    const movingAvg = Math.round(subsetTotal / (subset.length || 1));
+
+    return {
+      ...d,
+      previousTotal: prevTotal,
+      movingAverage: movingAvg
+    };
+  });
   const sumP0 = currentChartData.reduce((acc, curr) => acc + curr.P0, 0);
   const sumP1 = currentChartData.reduce((acc, curr) => acc + curr.P1, 0);
   const sumP2 = currentChartData.reduce((acc, curr) => acc + curr.P2, 0);
@@ -236,24 +431,45 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
   const pctP2 = totalPeriodIncidents > 0 ? Math.round((sumP2 / totalPeriodIncidents) * 100) : 0;
   const pctP3 = totalPeriodIncidents > 0 ? 100 - (pctP0 + pctP1 + pctP2) : 0;
 
-  const filteredIncidents = incidents
-    .filter((inc) => {
-      if (priorityOnly) {
-        return inc.severity === 'CRITICAL' || inc.severity === 'HIGH';
-      }
-      return true;
-    })
-    .filter((inc) => {
-      if (severityFilter === 'ALL') return true;
-      if (severityFilter === 'P0') return inc.severity === 'CRITICAL';
-      if (severityFilter === 'P1') return inc.severity === 'HIGH';
-      if (severityFilter === 'P2') return inc.severity === 'MEDIUM';
-      if (severityFilter === 'P3') return inc.severity === 'LOW';
-      return true;
-    })
-    .filter((inc) => {
-      return isWithinPeriod(inc.createdAt, timePeriodFilter);
-    });
+  const filteredIncidents = (() => {
+    let result = incidents
+      .filter((inc) => {
+        if (priorityOnly) {
+          return inc.severity === 'CRITICAL' || inc.severity === 'HIGH';
+        }
+        return true;
+      })
+      .filter((inc) => {
+        if (severityFilter === 'ALL') return true;
+        if (severityFilter === 'P0') return inc.severity === 'CRITICAL';
+        if (severityFilter === 'P1') return inc.severity === 'HIGH';
+        if (severityFilter === 'P2') return inc.severity === 'MEDIUM';
+        if (severityFilter === 'P3') return inc.severity === 'LOW';
+        return true;
+      })
+      .filter((inc) => {
+        return isWithinPeriod(inc.createdAt, timePeriodFilter);
+      })
+      .filter((inc) => {
+        if (serviceFilter === 'ALL') return true;
+        return inc.appName === serviceFilter;
+      })
+      .filter((inc) => {
+        if (assigneeFilter === 'ALL' || assigneeFilter === 'SORT_NAME') return true;
+        if (assigneeFilter === 'UNASSIGNED') return !inc.assignee || inc.assignee === 'Unassigned';
+        return inc.assignee === assigneeFilter;
+      });
+
+    if (assigneeFilter === 'SORT_NAME') {
+      result = [...result].sort((a, b) => {
+        const nameA = a.assignee || 'zzzzzz';
+        const nameB = b.assignee || 'zzzzzz';
+        return nameA.localeCompare(nameB);
+      });
+    }
+
+    return result;
+  })();
 
   const getSeverityTooltipContent = (sev: string) => {
     switch (sev) {
@@ -337,6 +553,184 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
     
     window.dispatchEvent(new CustomEvent('show-toast', {
       detail: { message: `Exported ${filteredIncidents.length} incidents to CSV.` }
+    }));
+  };
+
+  const handleDownloadWorkspacePDF = () => {
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4'
+    });
+
+    // Colors
+    const PRIMARY = [99, 102, 241]; // Indigo
+    const SECONDARY = [15, 23, 42]; // Slate 900
+    const TEXT_DARK = [30, 41, 59]; // Slate 800
+    const TEXT_LIGHT = [100, 116, 139]; // Slate 500
+    
+    // Header block
+    doc.setFillColor(SECONDARY[0], SECONDARY[1], SECONDARY[2]);
+    doc.rect(0, 0, 210, 40, 'F');
+
+    // Title
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("SUPPORTPILOT OPERATIONAL WORKSPACE SUMMARY", 15, 16);
+
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(165, 180, 252);
+    doc.text("ACTIVE FILTERED INCIDENTS EXECUTIVE DEBRIEF", 15, 22);
+
+    // Meta
+    doc.setTextColor(203, 213, 225);
+    doc.setFontSize(8);
+    const dateStr = new Date().toLocaleString();
+    doc.text(`Generated: ${dateStr}`, 15, 31);
+    doc.text(`Scope: Filtered Incident Queue (${filteredIncidents.length} Cases)`, 120, 31);
+
+    // Summary Section
+    doc.setTextColor(PRIMARY[0], PRIMARY[1], PRIMARY[2]);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("1. OPERATIONAL STATUS SUMMARY", 15, 52);
+    
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.5);
+    doc.line(15, 54, 195, 54);
+
+    // Calculations
+    const active = filteredIncidents.filter(i => i.status !== 'SOLVED');
+    const solved = filteredIncidents.filter(i => i.status === 'SOLVED');
+    const critical = filteredIncidents.filter(i => i.severity === 'CRITICAL');
+    const high = filteredIncidents.filter(i => i.severity === 'HIGH');
+    const med = filteredIncidents.filter(i => i.severity === 'MEDIUM');
+    const low = filteredIncidents.filter(i => i.severity === 'LOW');
+
+    // Stats Grid Draw
+    doc.setFillColor(248, 250, 252);
+    doc.rect(15, 58, 180, 24, 'F');
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.2);
+    doc.rect(15, 58, 180, 24, 'S');
+
+    doc.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2]);
+    doc.setFontSize(9);
+    doc.setFont("Helvetica", "bold");
+    doc.text("Active Cases:", 20, 65);
+    doc.setFont("Helvetica", "normal");
+    doc.text(`${active.length}`, 45, 65);
+
+    doc.setFont("Helvetica", "bold");
+    doc.text("Resolved Cases:", 80, 65);
+    doc.setFont("Helvetica", "normal");
+    doc.text(`${solved.length}`, 110, 65);
+
+    doc.setFont("Helvetica", "bold");
+    doc.text("Total Logged:", 145, 65);
+    doc.setFont("Helvetica", "normal");
+    doc.text(`${filteredIncidents.length}`, 170, 65);
+
+    // Row 2 of grid
+    doc.setFont("Helvetica", "bold");
+    doc.text("P0 (Critical):", 20, 75);
+    doc.setFont("Helvetica", "normal");
+    doc.setTextColor(225, 29, 72); // Rose
+    doc.text(`${critical.length}`, 45, 75);
+    doc.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2]);
+
+    doc.setFont("Helvetica", "bold");
+    doc.text("P1 (High):", 80, 75);
+    doc.setFont("Helvetica", "normal");
+    doc.setTextColor(217, 119, 6); // Amber
+    doc.text(`${high.length}`, 110, 75);
+    doc.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2]);
+
+    doc.setFont("Helvetica", "bold");
+    doc.text("P2/P3 (Med/Low):", 145, 75);
+    doc.setFont("Helvetica", "normal");
+    doc.text(`${med.length + low.length}`, 178, 75);
+
+    // List header
+    doc.setTextColor(PRIMARY[0], PRIMARY[1], PRIMARY[2]);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("2. DETAILED INCIDENT LEDGER", 15, 94);
+    
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.5);
+    doc.line(15, 96, 195, 96);
+
+    let y = 104;
+    doc.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2]);
+    
+    // Draw columns
+    filteredIncidents.slice(0, 15).forEach((inc) => {
+      if (y < 270) {
+        doc.setFont("Helvetica", "bold");
+        doc.setFontSize(8.5);
+        
+        // Severity colored text
+        let sevColor = [100, 116, 139];
+        if (inc.severity === 'CRITICAL') sevColor = [225, 29, 72];
+        if (inc.severity === 'HIGH') sevColor = [217, 119, 6];
+        
+        doc.setFillColor(248, 250, 252);
+        doc.rect(15, y - 4, 180, 11, 'F');
+        doc.setDrawColor(241, 245, 249);
+        doc.rect(15, y - 4, 180, 11, 'S');
+
+        doc.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2]);
+        doc.text(`${inc.id}`, 18, y);
+        
+        doc.setTextColor(sevColor[0], sevColor[1], sevColor[2]);
+        doc.text(`[${inc.severity}]`, 35, y);
+        
+        doc.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2]);
+        const titleStr = inc.title.length > 55 ? inc.title.slice(0, 52) + "..." : inc.title;
+        doc.text(titleStr, 58, y);
+
+        doc.setFont("Helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(TEXT_LIGHT[0], TEXT_LIGHT[1], TEXT_LIGHT[2]);
+        doc.text(`App: ${inc.appName} | Status: ${inc.status} | Tenant: ${getTenantName(inc.tenantId)}`, 18, y + 4.5);
+        
+        y += 13;
+      }
+    });
+
+    if (filteredIncidents.length > 15) {
+      doc.setFont("Helvetica", "italic");
+      doc.setFontSize(8);
+      doc.setTextColor(TEXT_LIGHT[0], TEXT_LIGHT[1], TEXT_LIGHT[2]);
+      doc.text(`... and ${filteredIncidents.length - 15} more incidents truncated from report.`, 15, y);
+    }
+
+    // Footer signature block at bottom
+    doc.setFillColor(SECONDARY[0], SECONDARY[1], SECONDARY[2]);
+    doc.rect(0, 282, 210, 15, 'F');
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(255, 255, 255);
+    doc.text("SUPPORTPILOT INTEGRATED COGNITIVE SHIELD", 15, 291);
+    doc.setFont("Helvetica", "normal");
+    doc.text("Page 1 of 1", 180, 291);
+
+    // Save PDF
+    doc.save(`SupportPilot_Workspace_Report_${new Date().toISOString().slice(0,10)}.pdf`);
+
+    onAddAuditLog(
+      "Eshan Barua (CTO)",
+      "Export PDF Report",
+      "Operational Workspace",
+      "SUCCESS",
+      `Compiled visual operational workspace report PDF with ${filteredIncidents.length} items.`
+    );
+    
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `Exported ${filteredIncidents.length} incidents to PDF report.` }
     }));
   };
 
@@ -444,13 +838,66 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
       if (targetIds.includes(inc.id)) {
         switch (type) {
           case 'ASSIGN':
-            return { ...inc, assignee: value, lastModifiedBy: "Eshan Barua (CTO)" };
+            return { 
+              ...inc, 
+              assignee: value, 
+              lastModifiedBy: "Eshan Barua (CTO)",
+              statusHistory: [
+                ...getStatusHistory(inc),
+                {
+                  status: inc.status,
+                  timestamp: new Date().toISOString(),
+                  changedBy: "Eshan Barua (Bulk Action)",
+                  message: `Reassigned ticket owner to ${value}.`
+                }
+              ]
+            };
           case 'STATUS':
-            return { ...inc, status: value as any, lastModifiedBy: "Eshan Barua (CTO)" };
+            return { 
+              ...inc, 
+              status: value as any, 
+              lastModifiedBy: "Eshan Barua (CTO)",
+              statusHistory: [
+                ...getStatusHistory(inc),
+                {
+                  status: value as any,
+                  timestamp: new Date().toISOString(),
+                  changedBy: "Eshan Barua (Bulk Action)",
+                  message: `Transitioned status to ${value} via bulk operations.`
+                }
+              ]
+            };
           case 'REPRIORITIZE':
-            return { ...inc, severity: value as any, lastModifiedBy: "Eshan Barua (CTO)" };
+            return { 
+              ...inc, 
+              severity: value as any, 
+              lastModifiedBy: "Eshan Barua (CTO)",
+              statusHistory: [
+                ...getStatusHistory(inc),
+                {
+                  status: inc.status,
+                  timestamp: new Date().toISOString(),
+                  changedBy: "Eshan Barua (Bulk Action)",
+                  message: `Reprioritized severity level to ${value}.`
+                }
+              ]
+            };
           case 'RESOLVE_ALL':
-            return { ...inc, status: 'SOLVED', csatScore: 94, lastModifiedBy: "Eshan Barua (CTO)" };
+            return { 
+              ...inc, 
+              status: 'SOLVED', 
+              csatScore: 94, 
+              lastModifiedBy: "Eshan Barua (CTO)",
+              statusHistory: [
+                ...getStatusHistory(inc),
+                {
+                  status: 'SOLVED',
+                  timestamp: new Date().toISOString(),
+                  changedBy: "Eshan Barua (Bulk Action)",
+                  message: "Resolved incident via bulk resolution."
+                }
+              ]
+            };
           default:
             return inc;
         }
@@ -904,7 +1351,7 @@ Generated by SupportPilot AI Platform.
   }, [incidents, onAddAuditLog]);
   
   // Tab within the Telemetry Panel
-  const [telemetryTab, setTelemetryTab] = useState<'logs' | 'metrics' | 'traces' | 'db' | 'k8s' | 'topology' | 'timeline'>('logs');
+  const [telemetryTab, setTelemetryTab] = useState<'logs' | 'metrics' | 'traces' | 'db' | 'k8s' | 'topology' | 'timeline' | 'status_history'>('logs');
 
   // Real-time ticking state for SLA remaining timer calculation
   const [liveNow, setLiveNow] = useState(Date.now());
@@ -1103,6 +1550,82 @@ Generated by SupportPilot AI Platform.
     }
   }, [incidents]);
 
+  const getUrgencyBadgeDetails = (sev: string) => {
+    switch (sev) {
+      case 'CRITICAL':
+        return {
+          label: 'Critical',
+          colorClass: 'bg-rose-500/15 text-rose-400 border border-rose-500/30 font-extrabold shadow-sm shadow-rose-950/20',
+          icon: <Icons.Flame className="h-3 w-3 text-rose-400 shrink-0" />
+        };
+      case 'HIGH':
+        return {
+          label: 'High',
+          colorClass: 'bg-amber-500/15 text-amber-400 border border-amber-500/30 font-bold',
+          icon: <Icons.AlertTriangle className="h-3 w-3 text-amber-400 shrink-0" />
+        };
+      case 'MEDIUM':
+        return {
+          label: 'Medium',
+          colorClass: 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 font-semibold',
+          icon: <Icons.Info className="h-3 w-3 text-indigo-400 shrink-0" />
+        };
+      case 'LOW':
+      default:
+        return {
+          label: 'Low',
+          colorClass: 'bg-slate-500/15 text-slate-400 border border-slate-500/30 font-medium',
+          icon: <Icons.CheckCircle2 className="h-3 w-3 text-slate-500 shrink-0" />
+        };
+    }
+  };
+
+  const getStatusHistory = (inc: Incident) => {
+    if (inc.statusHistory && inc.statusHistory.length > 0) {
+      return inc.statusHistory;
+    }
+
+    const history: Array<{ status: 'OPEN' | 'INVESTIGATING' | 'SOLVED' | 'ESCALATED'; timestamp: string; changedBy: string; message?: string }> = [
+      {
+        status: 'OPEN',
+        timestamp: inc.createdAt,
+        changedBy: 'System Monitor',
+        message: 'Incident detected and automatically generated via webhook telemetry alert.'
+      }
+    ];
+
+    const createdTime = new Date(inc.createdAt).getTime();
+
+    if (inc.status === 'INVESTIGATING' || inc.status === 'ESCALATED' || inc.status === 'SOLVED') {
+      history.push({
+        status: 'INVESTIGATING',
+        timestamp: new Date(createdTime + 4 * 60 * 1000).toISOString(),
+        changedBy: inc.assignee && inc.assignee !== 'Unassigned' ? inc.assignee : 'Incident Dispatcher',
+        message: 'Triage complete. Transitioned to investigating. Telemetry monitoring established.'
+      });
+    }
+
+    if (inc.status === 'ESCALATED') {
+      history.push({
+        status: 'ESCALATED',
+        timestamp: new Date(createdTime + 12 * 60 * 1000).toISOString(),
+        changedBy: 'Incident Agent',
+        message: 'SLA threshold alert triggered. Automatically escalated priority and pager alert dispatched.'
+      });
+    }
+
+    if (inc.status === 'SOLVED') {
+      history.push({
+        status: 'SOLVED',
+        timestamp: new Date(createdTime + 22 * 60 * 1000).toISOString(),
+        changedBy: inc.assignee && inc.assignee !== 'Unassigned' ? inc.assignee : 'System Auto-Resolve',
+        message: 'Remediation scripts executed successfully. Automated checks green. CSAT survey dispatched.'
+      });
+    }
+
+    return history;
+  };
+
   const getSeverityBadge = (sev: string) => {
     switch (sev) {
       case 'CRITICAL':
@@ -1195,7 +1718,16 @@ Generated by SupportPilot AI Platform.
             status: 'INVESTIGATING',
             analysis: data,
             automaticReply: data.automaticReply,
-            lastModifiedBy: "AI Investigator"
+            lastModifiedBy: "AI Investigator",
+            statusHistory: [
+              ...getStatusHistory(inc),
+              {
+                status: 'INVESTIGATING',
+                timestamp: new Date().toISOString(),
+                changedBy: "AI Investigator",
+                message: "Incident investigation completed autonomously by Gemini L3 Investigator."
+              }
+            ]
           };
         }
         return inc;
@@ -1266,7 +1798,16 @@ Generated by SupportPilot AI Platform.
             logs: updatedLogs,
             dbState: updatedDbState,
             csatScore: Math.floor(Math.random() * 15) + 85, // high satisfaction
-            lastModifiedBy: "AutomationAgent"
+            lastModifiedBy: "AutomationAgent",
+            statusHistory: [
+              ...getStatusHistory(inc),
+              {
+                status: 'SOLVED',
+                timestamp: new Date().toISOString(),
+                changedBy: "AutomationAgent",
+                message: `Remediation script "${pendingAction}" executed successfully. System validated and resolved.`
+              }
+            ]
           };
         }
         return inc;
@@ -1714,7 +2255,12 @@ Generated by SupportPilot AI Platform.
   });
 
   return (
-    <div className="grid h-[calc(100vh-130px)] grid-cols-12 gap-4 text-xs font-sans">
+    <div className="flex flex-col h-[calc(100vh-130px)] space-y-3.5 text-xs font-sans overflow-hidden">
+      {/* 0. TOP-LEVEL METADATA SUMMARY HEADER */}
+      <IncidentSummary incidents={incidents} />
+
+      {/* WORKSPACE CONTENT GRID */}
+      <div className="flex-1 grid grid-cols-12 gap-4 overflow-hidden">
       {/* 1. COMPREHENSIVE INCIDENT CASE QUEUE (Sidebar Left) */}
       <div className="col-span-3 flex flex-col overflow-hidden bento-card-premium p-4">
         <div className="flex items-center justify-between mb-3 border-b border-slate-900 pb-1">
@@ -1808,8 +2354,190 @@ Generated by SupportPilot AI Platform.
           </button>
         </div>
 
-        {/* Active Filters Pill */}
-        {(severityFilter !== 'ALL' || timePeriodFilter !== 'ALL' || priorityOnly) && (
+        {/* Assignee Filter & Sort Dropdown */}
+        <div className="mb-3 flex items-center justify-between gap-1.5">
+          <div className="flex-1 flex items-center space-x-1.5 bg-slate-900/10 border border-slate-900 rounded-lg p-1.5">
+            <label htmlFor="assignee-filter" className="text-[9px] font-mono text-slate-500 uppercase tracking-wider shrink-0 flex items-center space-x-1 pl-1">
+              <Icons.UserCheck className="h-3 w-3 text-emerald-400" />
+              <span>Assignee</span>
+            </label>
+            <div className="relative flex-1">
+              <select
+                id="assignee-filter"
+                value={assigneeFilter}
+                onChange={(e) => setAssigneeFilter(e.target.value)}
+                className="w-full rounded bg-slate-950 border border-slate-800/80 text-[10px] font-mono text-slate-300 py-1 pl-1.5 pr-5 appearance-none focus:outline-none focus:border-indigo-500 cursor-pointer"
+              >
+                <option value="ALL">ALL ASSIGNEES</option>
+                <option value="SORT_NAME">SORT BY ASSIGNEE</option>
+                <option value="UNASSIGNED">UNASSIGNED</option>
+                {ENGINEERS.map(eng => (
+                  <option key={eng} value={eng}>{eng.toUpperCase()}</option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-1 text-slate-500">
+                <Icons.ChevronDown className="h-3 w-3" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Service Filter Dropdown */}
+        <div className="mb-3 flex items-center justify-between gap-1.5">
+          <div className="flex-1 flex items-center space-x-1.5 bg-slate-900/10 border border-slate-900 rounded-lg p-1.5">
+            <label htmlFor="service-filter" className="text-[9px] font-mono text-slate-500 uppercase tracking-wider shrink-0 flex items-center space-x-1 pl-1">
+              <Icons.Cpu className="h-3 w-3 text-indigo-400" />
+              <span>Service</span>
+            </label>
+            <div className="relative flex-1">
+              <select
+                id="service-filter"
+                value={serviceFilter}
+                onChange={(e) => setServiceFilter(e.target.value)}
+                className="w-full rounded bg-slate-950 border border-slate-800/80 text-[10px] font-mono text-slate-300 py-1 pl-1.5 pr-5 appearance-none focus:outline-none focus:border-indigo-500 cursor-pointer"
+              >
+                <option value="ALL">ALL SERVICES</option>
+                {servicesList.map(srv => (
+                  <option key={srv} value={srv}>{srv.toUpperCase()}</option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-1 text-slate-500">
+                <Icons.ChevronDown className="h-3 w-3" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Group By Dropdown */}
+        <div className="mb-3 flex items-center justify-between gap-1.5">
+          <div className="flex-1 flex items-center space-x-1.5 bg-slate-900/10 border border-slate-900 rounded-lg p-1.5">
+            <label htmlFor="group-by-select" className="text-[9px] font-mono text-slate-500 uppercase tracking-wider shrink-0 flex items-center space-x-1 pl-1">
+              <Icons.Layers className="h-3 w-3 text-indigo-400" />
+              <span>Group By</span>
+            </label>
+            <div className="relative flex-1">
+              <select
+                id="group-by-select"
+                value={groupBy}
+                onChange={(e) => setGroupBy(e.target.value as any)}
+                className="w-full rounded bg-slate-950 border border-slate-800/80 text-[10px] font-mono text-slate-300 py-1 pl-1.5 pr-5 appearance-none focus:outline-none focus:border-indigo-500 cursor-pointer"
+              >
+                <option value="NONE">NO GROUPING</option>
+                <option value="SERVICE">SERVICE (APP NAME)</option>
+                <option value="PRIORITY">PRIORITY (SEVERITY)</option>
+                <option value="AGENT">ASSIGNED AGENT</option>
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-1 text-slate-500">
+                <Icons.ChevronDown className="h-3 w-3" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Save Current View Panel */}
+        <div className="mb-3 border border-slate-900 bg-slate-950/20 rounded-lg p-1.5">
+          {!isSavingView ? (
+            <button
+              onClick={() => setIsSavingView(true)}
+              className="w-full flex items-center justify-center space-x-1.5 py-1.5 rounded bg-slate-900 hover:bg-slate-850 border border-slate-800 text-[10px] font-mono text-indigo-300 transition-all cursor-pointer font-semibold"
+            >
+              <Icons.Save className="h-3.5 w-3.5" />
+              <span>SAVE CURRENT FILTERS</span>
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <div className="text-[8px] font-mono font-bold text-slate-500 uppercase tracking-wider pl-1">Save Filter Configuration</div>
+              <input
+                type="text"
+                value={newViewName}
+                onChange={(e) => setNewViewName(e.target.value)}
+                placeholder="e.g. Critical Billing Gateway"
+                className="w-full rounded bg-slate-950 border border-slate-850 text-[10px] font-mono text-slate-300 p-1.5 focus:outline-none focus:border-indigo-500"
+              />
+              <div className="flex space-x-1.5">
+                <button
+                  onClick={handleSaveCurrentView}
+                  disabled={!newViewName.trim()}
+                  className="flex-1 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-[9px] font-bold disabled:opacity-40 transition-colors cursor-pointer"
+                >
+                  SAVE
+                </button>
+                <button
+                  onClick={() => {
+                    setIsSavingView(false);
+                    setNewViewName('');
+                  }}
+                  className="flex-1 py-1 rounded bg-slate-900 hover:bg-slate-850 border border-slate-800 text-slate-400 font-mono text-[9px] transition-colors cursor-pointer"
+                >
+                  CANCEL
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Quick Report Actions */}
+        <div className="mb-3 flex gap-1.5 shrink-0">
+          <button
+            onClick={handleDownloadWorkspacePDF}
+            className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-indigo-600/10 border border-indigo-500/20 hover:bg-indigo-600/25 hover:border-indigo-500/40 text-indigo-400 font-mono text-[9px] font-bold cursor-pointer transition-all"
+            title="Export filtered active queue findings as professional PDF report"
+          >
+            <Icons.Download className="h-3 w-3 text-indigo-400" />
+            <span>PDF Summary</span>
+          </button>
+          <button
+            onClick={handleDownloadCSV}
+            className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-emerald-600/10 border border-emerald-500/20 hover:bg-emerald-600/25 hover:border-emerald-500/40 text-emerald-400 font-mono text-[9px] font-bold cursor-pointer transition-all"
+            title="Download currently filtered incidents as CSV"
+          >
+            <Icons.FileSpreadsheet className="h-3 w-3 text-emerald-400" />
+            <span>CSV Data</span>
+          </button>
+        </div>
+
+        {/* Saved Views Quick-Access Tabs */}
+        <div className="mb-3">
+          <div className="text-[8px] font-mono font-bold text-slate-500 uppercase tracking-wider mb-1.5 pl-1 flex items-center gap-1.5">
+            <Icons.FolderHeart className="h-3 w-3 text-indigo-400" />
+            <span>Saved Views Queue Tabs</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+            {savedViews.map(view => {
+              const isActive = activeViewId === view.id;
+              return (
+                <div
+                  key={view.id}
+                  onClick={() => handleApplySavedView(view)}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-[9.5px] font-mono font-bold transition-all cursor-pointer shadow-sm select-none ${
+                    isActive
+                      ? 'bg-indigo-600/15 border-indigo-500 text-indigo-200 font-extrabold'
+                      : 'bg-slate-950/40 border-slate-900 text-slate-400 hover:border-slate-800 hover:text-slate-300'
+                  }`}
+                >
+                  <span>{view.name}</span>
+                  {view.id !== 'all-view' && (
+                    <button
+                      onClick={(e) => handleDeleteSavedView(view.id, e)}
+                      className="ml-1 hover:text-rose-400 text-slate-600 transition-colors focus:outline-none"
+                      title="Delete saved view"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+            {activeViewId === 'custom' && (
+              <div className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-[9.5px] font-mono font-bold bg-amber-600/10 border-amber-500/40 text-amber-300 select-none">
+                <Icons.Sliders className="h-3 w-3 animate-pulse text-amber-400" />
+                <span>Custom View</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {(severityFilter !== 'ALL' || timePeriodFilter !== 'ALL' || serviceFilter !== 'ALL' || priorityOnly) && (
           <div className="mb-2.5 flex flex-wrap gap-1 bg-slate-950/40 rounded-lg p-1.5 border border-slate-800/60 items-center justify-between">
             <span className="text-[8px] font-mono font-bold text-indigo-400 uppercase tracking-wider pl-1 flex items-center gap-1">
               <Icons.SlidersHorizontal className="h-2.5 w-2.5" />
@@ -1838,6 +2566,17 @@ Generated by SupportPilot AI Platform.
                   </button>
                 </span>
               )}
+              {serviceFilter !== 'ALL' && (
+                <span className="inline-flex items-center gap-1 rounded bg-indigo-500/15 border border-indigo-500/20 px-1.5 py-0.5 text-[8.5px] font-mono font-bold text-indigo-300">
+                  {serviceFilter}
+                  <button 
+                    onClick={() => setServiceFilter('ALL')} 
+                    className="hover:text-white text-slate-500 transition-colors focus:outline-none ml-0.5"
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
               {priorityOnly && (
                 <span className="inline-flex items-center gap-1 rounded bg-rose-500/15 border border-rose-500/20 px-1.5 py-0.5 text-[8.5px] font-mono font-bold text-rose-300">
                   Priority Only
@@ -1853,6 +2592,7 @@ Generated by SupportPilot AI Platform.
                 onClick={() => {
                   setSeverityFilter('ALL');
                   setTimePeriodFilter('ALL');
+                  setServiceFilter('ALL');
                   setPriorityOnly(false);
                 }}
                 className="text-[8px] font-bold text-slate-500 hover:text-white hover:underline transition-all px-1"
@@ -1864,175 +2604,349 @@ Generated by SupportPilot AI Platform.
         )}
 
         <div className="flex-1 space-y-2.5 overflow-y-auto pr-1">
-          <AnimatePresence mode="popLayout">
-            {filteredIncidents
-              .map((inc) => {
-                const isSelected = inc.id === selectedIncident.id;
-                const isSolved = inc.status === 'SOLVED';
-                const isSelectedInBulk = selectedIncidentIds.includes(inc.id);
+          {(() => {
+            const renderIncidentCard = (inc: Incident) => {
+              const isSelected = inc.id === selectedIncident.id;
+              const isSolved = inc.status === 'SOLVED';
+              const isSelectedInBulk = selectedIncidentIds.includes(inc.id);
 
-                return (
-                  <motion.div
-                    layout
-                    initial={{ opacity: 0, y: 12, scale: 0.98 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95, y: -12 }}
-                    transition={{ duration: 0.25, ease: 'easeInOut' }}
-                    key={inc.id}
-                    onClick={() => {
-                      if (bulkMode) {
-                        setSelectedIncidentIds(prev =>
-                          prev.includes(inc.id)
-                            ? prev.filter(id => id !== inc.id)
-                            : [...prev, inc.id]
-                        );
-                      } else {
-                        setSelectedIncident(inc);
-                        setDrawerIncidentId(inc.id);
-                      }
-                    }}
-                    className={`w-full flex items-center rounded-xl p-3 border.5 text-left transition-all relative overflow-hidden cursor-pointer ${
-                      isSelected && !bulkMode
-                        ? 'bg-slate-950/80 border-indigo-500/80 shadow-lg shadow-indigo-500/5 scale-[1.01]' 
-                        : isSelectedInBulk && bulkMode
-                          ? 'bg-indigo-950/30 border-indigo-500/50 shadow-lg'
-                          : 'bg-slate-900/30 border-slate-800/60 hover:bg-slate-900/60 hover:border-slate-800/80'
-                    }`}
-                  >
-                    {/* Active SLA countdown color strip */}
-                    <div className={`absolute top-0 left-0 bottom-0 w-1.5 ${
-                      isSolved ? 'bg-emerald-500' : inc.severity === 'CRITICAL' ? 'bg-rose-500 animate-pulse' : 'bg-amber-500'
-                    }`} />
+              return (
+                <motion.div
+                  layout
+                  initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95, y: -12 }}
+                  transition={{ duration: 0.25, ease: 'easeInOut' }}
+                  key={inc.id}
+                  onClick={() => {
+                    if (bulkMode) {
+                      setSelectedIncidentIds(prev =>
+                        prev.includes(inc.id)
+                          ? prev.filter(id => id !== inc.id)
+                          : [...prev, inc.id]
+                      );
+                    } else {
+                      setSelectedIncident(inc);
+                      setDrawerIncidentId(inc.id);
+                    }
+                  }}
+                  className={`w-full flex items-start rounded-xl p-3 border.5 text-left transition-all relative overflow-hidden cursor-pointer ${
+                    isSelected && !bulkMode
+                      ? 'bg-slate-950/80 border-indigo-500/80 shadow-lg shadow-indigo-500/5 scale-[1.01]' 
+                      : isSelectedInBulk && bulkMode
+                        ? 'bg-indigo-950/30 border-indigo-500/50 shadow-lg'
+                        : 'bg-slate-900/30 border-slate-800/60 hover:bg-slate-900/60 hover:border-slate-800/80'
+                  }`}
+                >
+                  {/* Active SLA countdown color strip */}
+                  <div className={`absolute top-0 left-0 bottom-0 w-1.5 ${
+                    isSolved ? 'bg-emerald-500' : inc.severity === 'CRITICAL' ? 'bg-rose-500 animate-pulse' : 'bg-amber-500'
+                  }`} />
 
-                    {/* Bulk Select Checkbox */}
-                    {bulkMode && (
-                      <div className="pl-1.5 mr-2 shrink-0 flex items-center justify-center">
-                        <div className={`h-4 w-4 rounded border flex items-center justify-center transition-all ${
-                          isSelectedInBulk
-                            ? 'bg-indigo-600 border-indigo-500 text-white'
-                            : 'border-slate-700 bg-slate-950/80 hover:border-slate-500'
-                        }`}>
-                          {isSelectedInBulk && <Icons.Check className="h-3 w-3 stroke-[3]" />}
-                        </div>
+                  {/* Bulk Select Checkbox */}
+                  {bulkMode && (
+                    <div className="pl-1.5 mr-2 shrink-0 flex items-center justify-center pt-0.5">
+                      <div className={`h-4 w-4 rounded border flex items-center justify-center transition-all ${
+                        isSelectedInBulk
+                          ? 'bg-indigo-600 border-indigo-500 text-white'
+                          : 'border-slate-700 bg-slate-950/80 hover:border-slate-500'
+                      }`}>
+                        {isSelectedInBulk && <Icons.Check className="h-3 w-3 stroke-[3]" />}
                       </div>
-                    )}
+                    </div>
+                  )}
 
-                    <div className="pl-1.5 space-y-2 w-full flex-1">
-                      <div className="flex items-center justify-between">
+                  <div className="pl-1.5 space-y-2.5 w-full flex-1">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-1.5">
                         <span className="font-mono text-[9px] text-slate-500 font-semibold">{inc.id}</span>
-                        <div className="relative group/sev-tooltip shrink-0">
-                          <span className={`rounded-full px-2 py-0.5 font-mono text-[9px] font-bold ${getSeverityBadge(inc.severity)} cursor-help`}>
-                            {inc.severity}
-                          </span>
-                          <div className="absolute right-0 top-full mt-1.5 hidden group-hover/sev-tooltip:block z-50 w-44 rounded-xl border border-slate-800 bg-slate-950 p-3 text-[9px] font-mono text-slate-400 shadow-xl leading-normal pointer-events-none normal-case font-normal">
-                            {(() => {
-                              const tooltip = getSeverityTooltipContent(inc.severity);
-                              return (
-                                <>
-                                  <div className="font-bold text-white mb-1 flex items-center justify-between">
-                                    <span className="text-indigo-400">{tooltip.title}</span>
-                                    <span className="text-emerald-400 font-bold">{tooltip.sla}</span>
-                                  </div>
-                                  <p className="text-[9px] text-slate-400 font-sans leading-normal">
-                                    {tooltip.desc}
-                                  </p>
-                                </>
-                              );
-                            })()}
-                            <div className="absolute bottom-full right-2.5 border-4 border-transparent border-b-slate-800" />
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div>
-                        <h4 className="font-bold text-white text-xs leading-snug line-clamp-2">{inc.title}</h4>
-                        <p className="text-[10px] text-indigo-400 font-medium mt-1 uppercase tracking-wider text-[9px]">{getTenantName(inc.tenantId)}</p>
-                      </div>
-
-                      {/* Last Modified By Engineer Row */}
-                      <div className="flex items-center justify-between border-t border-slate-800/20 pt-1.5 text-[9px] text-slate-500 font-mono">
-                        <span className="flex items-center space-x-1" title={`Last updated by ${getLastModifiedBy(inc)}`}>
-                          <Icons.User className="h-3 w-3 text-slate-500" />
-                          <span>Mod:</span>
-                          <span className="text-slate-400 font-medium truncate max-w-[100px]">{getLastModifiedBy(inc)}</span>
-                        </span>
-                        <div 
-                          className="h-4 w-4 rounded-full bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-[7px] font-black text-indigo-400 shrink-0"
-                          title={`Last updated by ${getLastModifiedBy(inc)}`}
-                        >
-                          {getInitials(getLastModifiedBy(inc))}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between border-t border-slate-800/40 pt-2 text-[10px]">
-                        <div className="flex items-center space-x-1 text-slate-400 font-medium">
-                          {getChannelIcon(inc.source)}
-                          <span className="font-mono text-[9.5px]">{inc.appName}</span>
-                        </div>
-                        
-                        {/* SLA countdown timer */}
+                        {/* Sentiment Score Badge */}
                         {(() => {
-                          const slaDetails = getSlaDetails(inc);
-                          const radius = 6;
-                          const circumference = 2 * Math.PI * radius;
-                          const strokeDashoffset = circumference - (slaDetails.percentage / 100) * circumference;
-                          
+                          const sentiment = calculateSentimentScore(inc);
                           return (
-                            <div className={`font-mono font-bold text-[9.5px] flex items-center space-x-1.5 ${
-                              isSolved 
-                                ? 'text-emerald-400' 
-                                : slaDetails.isBreached 
-                                  ? 'text-rose-400 animate-pulse' 
-                                  : slaDetails.remainingMs < 10 * 60 * 1000 
-                                    ? 'text-amber-400 animate-pulse' 
-                                    : 'text-indigo-400'
-                            }`}>
-                              {isSolved ? (
-                                <span className="flex items-center space-x-1">
-                                  <Icons.Check className="h-3 w-3" />
-                                  <span>CSAT {inc.csatScore}%</span>
-                                </span>
-                              ) : (
-                                <div className="flex items-center space-x-1.5" title={`SLA Health: ${Math.round(slaDetails.percentage)}% time remaining`}>
-                                  <svg className="h-3.5 w-3.5 transform -rotate-90 shrink-0" viewBox="0 0 16 16">
-                                    <circle
-                                      cx="8"
-                                      cy="8"
-                                      r={radius}
-                                      className="stroke-slate-800"
-                                      strokeWidth="1.5"
-                                      fill="transparent"
-                                    />
-                                    <circle
-                                      cx="8"
-                                      cy="8"
-                                      r={radius}
-                                      className={
-                                        slaDetails.isBreached 
-                                          ? "stroke-rose-500" 
-                                          : slaDetails.remainingMs < 10 * 60 * 1000 
-                                            ? "stroke-amber-500" 
-                                            : "stroke-indigo-500"
-                                      }
-                                      strokeWidth="1.5"
-                                      fill="transparent"
-                                      strokeDasharray={circumference}
-                                      strokeDashoffset={strokeDashoffset}
-                                      strokeLinecap="round"
-                                    />
-                                  </svg>
-                                  <span>{slaDetails.formatted}</span>
-                                </div>
-                              )}
+                            <div 
+                              className={`flex items-center gap-0.5 rounded px-1 py-0.25 border text-[7.5px] font-mono font-bold ${sentiment.color}`}
+                              title={`Sentiment score: ${sentiment.score}/100 - ${sentiment.label}`}
+                            >
+                              <Icons.Smile className="h-2.5 w-2.5 shrink-0" />
+                              <span>{sentiment.score}</span>
                             </div>
                           );
                         })()}
                       </div>
+                      <div className="relative group/sev-tooltip shrink-0">
+                        {(() => {
+                          const urgency = getUrgencyBadgeDetails(inc.severity);
+                          return (
+                            <span className={`rounded-full px-2.5 py-0.5 font-mono text-[9px] flex items-center gap-1 cursor-help transition-all ${urgency.colorClass}`}>
+                              {urgency.icon}
+                              <span>{urgency.label}</span>
+                            </span>
+                          );
+                        })()}
+                        <div className="absolute right-0 top-full mt-1.5 hidden group-hover/sev-tooltip:block z-50 w-44 rounded-xl border border-slate-800 bg-slate-950 p-3 text-[9px] font-mono text-slate-400 shadow-xl leading-normal pointer-events-none normal-case font-normal">
+                          {(() => {
+                            const tooltip = getSeverityTooltipContent(inc.severity);
+                            return (
+                              <>
+                                <div className="font-bold text-white mb-1 flex items-center justify-between">
+                                  <span className="text-indigo-400">{tooltip.title}</span>
+                                  <span className="text-emerald-400 font-bold">{tooltip.sla}</span>
+                                </div>
+                                <p className="text-[9px] text-slate-400 font-sans leading-normal">
+                                  {tooltip.desc}
+                                </p>
+                              </>
+                            );
+                          })()}
+                          <div className="absolute bottom-full right-2.5 border-4 border-transparent border-b-slate-800" />
+                        </div>
+                      </div>
                     </div>
-                  </motion.div>
-                );
-              })}
-          </AnimatePresence>
+                    
+                    <div>
+                      <h4 className="font-bold text-white text-xs leading-snug line-clamp-2">{inc.title}</h4>
+                      <p className="text-[10px] text-indigo-400 font-medium mt-1 uppercase tracking-wider text-[9px]">{getTenantName(inc.tenantId)}</p>
+                    </div>
+
+                    {/* Last Modified By Engineer Row */}
+                    <div className="flex items-center justify-between border-t border-slate-800/20 pt-1.5 text-[9px] text-slate-500 font-mono">
+                      <span className="flex items-center space-x-1" title={`Last updated by ${getLastModifiedBy(inc)}`}>
+                        <Icons.User className="h-3 w-3 text-slate-500" />
+                        <span>Mod:</span>
+                        <span className="text-slate-400 font-medium truncate max-w-[100px]">{getLastModifiedBy(inc)}</span>
+                      </span>
+                      <div 
+                        className="h-4 w-4 rounded-full bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-[7px] font-black text-indigo-400 shrink-0"
+                        title={`Last updated by ${getLastModifiedBy(inc)}`}
+                      >
+                        {getInitials(getLastModifiedBy(inc))}
+                      </div>
+                    </div>
+
+                    {/* SLA Progress Bar Indicator */}
+                    {!isSolved && (
+                      (() => {
+                        const slaDetails = getSlaDetails(inc);
+                        const progressColor = slaDetails.isBreached
+                          ? 'bg-rose-500'
+                          : slaDetails.remainingMs < 10 * 60 * 1000
+                            ? 'bg-amber-500'
+                            : 'bg-indigo-500';
+                        return (
+                          <div className="space-y-1" title={`SLA Health: ${Math.round(slaDetails.percentage)}% time remaining`}>
+                            <div className="flex justify-between items-center text-[8px] font-mono text-slate-500">
+                              <span>SLA COUNTDOWN</span>
+                              <span className={slaDetails.isBreached ? 'text-rose-400 font-extrabold animate-pulse' : 'text-indigo-400 font-bold'}>
+                                {slaDetails.isBreached ? 'BREACHED' : slaDetails.formatted}
+                              </span>
+                            </div>
+                            <div className="w-full bg-slate-950 rounded-full h-1 overflow-hidden border border-slate-850/35">
+                              <div 
+                                className={`h-1 rounded-full transition-all duration-1000 ${progressColor}`}
+                                style={{ width: `${slaDetails.percentage}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })()
+                    )}
+
+                    {/* Bottom App/Channel Row */}
+                    <div className="flex items-center justify-between border-t border-slate-800/40 pt-2 text-[10px]">
+                      <div className="flex items-center space-x-1 text-slate-400 font-medium">
+                        {getChannelIcon(inc.source)}
+                        <span className="font-mono text-[9.5px]">{inc.appName}</span>
+                      </div>
+                      
+                      {/* SLA / CSAT Status Badge */}
+                      {(() => {
+                        const slaDetails = getSlaDetails(inc);
+                        return (
+                          <div className="font-mono font-bold text-[9.5px]">
+                            {isSolved ? (
+                              <span className="flex items-center space-x-1 text-emerald-400">
+                                <Icons.Check className="h-3 w-3" />
+                                <span>CSAT {inc.csatScore}%</span>
+                              </span>
+                            ) : (
+                              <span className={`flex items-center space-x-1 ${
+                                slaDetails.isBreached 
+                                  ? 'text-rose-400 animate-pulse' 
+                                  : slaDetails.remainingMs < 10 * 60 * 1000 
+                                    ? 'text-amber-400 animate-pulse' 
+                                    : 'text-indigo-400'
+                              }`}>
+                                <Icons.Clock className="h-3 w-3" />
+                                <span>{slaDetails.formatted}</span>
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* Quick Actions Toolbar */}
+                    <div className="flex items-center gap-1.5 border-t border-slate-800/20 pt-2.5" onClick={(e) => e.stopPropagation()}>
+                      <span className="text-[8px] font-mono text-slate-500 uppercase tracking-wider mr-auto">Quick Action:</span>
+                      
+                      <button
+                        disabled={inc.status === 'INVESTIGATING' || isSolved}
+                        onClick={() => {
+                          setIncidents(prev => prev.map(i => {
+                            if (i.id === inc.id) {
+                              return { 
+                                ...i, 
+                                status: 'INVESTIGATING', 
+                                lastModifiedBy: "Eshan Barua (Quick)",
+                                statusHistory: [
+                                  ...getStatusHistory(i),
+                                  {
+                                    status: 'INVESTIGATING',
+                                    timestamp: new Date().toISOString(),
+                                    changedBy: "Eshan Barua (CTO)",
+                                    message: "Incident status acknowledged & transitioned to investigating via list quick toolbar."
+                                  }
+                                ]
+                              };
+                            }
+                            return i;
+                          }));
+                          window.dispatchEvent(new CustomEvent('show-toast', {
+                            detail: { message: `Incident ${inc.id} Acknowledged (Investigating).` }
+                          }));
+                        }}
+                        className={`px-2 py-0.5 rounded text-[8px] font-mono font-bold transition-all cursor-pointer ${
+                          inc.status === 'INVESTIGATING'
+                            ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 cursor-not-allowed'
+                            : isSolved
+                              ? 'bg-slate-800/40 text-slate-600 border border-slate-800/20 cursor-not-allowed'
+                              : 'bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 active:scale-95'
+                        }`}
+                        title="Acknowledge (Set status to INVESTIGATING)"
+                      >
+                        ACK
+                      </button>
+
+                      <button
+                        disabled={inc.status === 'ESCALATED' || isSolved}
+                        onClick={() => {
+                          setIncidents(prev => prev.map(i => {
+                            if (i.id === inc.id) {
+                              return { 
+                                ...i, 
+                                status: 'ESCALATED', 
+                                severity: i.severity === 'LOW' ? 'MEDIUM' : i.severity === 'MEDIUM' ? 'HIGH' : 'CRITICAL',
+                                lastModifiedBy: "Eshan Barua (Quick)",
+                                statusHistory: [
+                                  ...getStatusHistory(i),
+                                  {
+                                    status: 'ESCALATED',
+                                    timestamp: new Date().toISOString(),
+                                    changedBy: "Eshan Barua (CTO)",
+                                    message: "Incident escalated and severity boosted via list quick toolbar."
+                                  }
+                                ]
+                              };
+                            }
+                            return i;
+                          }));
+                          window.dispatchEvent(new CustomEvent('show-toast', {
+                            detail: { message: `Incident ${inc.id} Escalated (Escalation level increased).` }
+                          }));
+                        }}
+                        className={`px-2 py-0.5 rounded text-[8px] font-mono font-bold transition-all cursor-pointer ${
+                          inc.status === 'ESCALATED'
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 cursor-not-allowed'
+                          : isSolved
+                            ? 'bg-slate-800/40 text-slate-600 border border-slate-800/20 cursor-not-allowed'
+                            : 'bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 active:scale-95'
+                        }`}
+                        title="Escalate (Set status to ESCALATED and raise severity)"
+                      >
+                        ESC
+                      </button>
+
+                      <button
+                        disabled={isSolved}
+                        onClick={() => {
+                          setIncidents(prev => prev.map(i => {
+                            if (i.id === inc.id) {
+                              return { 
+                                ...i, 
+                                status: 'SOLVED', 
+                                csatScore: 95, 
+                                lastModifiedBy: "Eshan Barua (Quick)",
+                                statusHistory: [
+                                  ...getStatusHistory(i),
+                                  {
+                                    status: 'SOLVED',
+                                    timestamp: new Date().toISOString(),
+                                    changedBy: "Eshan Barua (CTO)",
+                                    message: "Incident marked as resolved via list quick toolbar."
+                                  }
+                                ]
+                              };
+                            }
+                            return i;
+                          }));
+                          window.dispatchEvent(new CustomEvent('show-toast', {
+                            detail: { message: `Incident ${inc.id} marked as RESOLVED (CSAT: 95%).` }
+                          }));
+                        }}
+                        className={`px-2 py-0.5 rounded text-[8px] font-mono font-bold transition-all cursor-pointer ${
+                          isSolved
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 cursor-not-allowed'
+                            : 'bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 active:scale-95'
+                        }`}
+                        title="Resolve (Set status to SOLVED)"
+                      >
+                        RES
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            };
+
+            const groupedIncidents = (() => {
+              if (groupBy === 'NONE') return null;
+              const groups: { [key: string]: Incident[] } = {};
+              filteredIncidents.forEach(inc => {
+                let key = '';
+                if (groupBy === 'SERVICE') {
+                  key = inc.appName || 'Unknown Service';
+                } else if (groupBy === 'PRIORITY') {
+                  key = inc.severity || 'LOW';
+                } else if (groupBy === 'AGENT') {
+                  key = inc.assignee || 'Unassigned';
+                }
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(inc);
+              });
+              return groups;
+            })();
+
+            return (
+              <AnimatePresence mode="popLayout">
+                {groupBy === 'NONE' ? (
+                  filteredIncidents.map((inc) => renderIncidentCard(inc))
+                ) : (
+                  Object.entries(groupedIncidents || {}).map(([groupName, groupItems]) => (
+                    <div key={groupName} className="space-y-2 mt-2">
+                      <div className="flex items-center justify-between px-2.5 py-1.5 bg-slate-950/60 border border-slate-800/40 rounded-lg text-[9px] font-mono font-bold text-indigo-300 uppercase tracking-wider shadow-sm">
+                        <span>{groupName}</span>
+                        <span className="text-slate-500 font-mono text-[8px] lowercase">{groupItems.length} {groupItems.length === 1 ? 'case' : 'cases'}</span>
+                      </div>
+                      <div className="space-y-2.5 pl-1.5 border-l-2 border-slate-800/30">
+                        {groupItems.map((inc) => renderIncidentCard(inc))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </AnimatePresence>
+            );
+          })()}
         </div>
       </div>
 
@@ -2044,41 +2958,41 @@ Generated by SupportPilot AI Platform.
           <div className="flex items-start justify-between">
             <div>
               <div className="flex items-center space-x-2 text-[9.5px] font-mono text-slate-500 mb-1.5">
-                <div className="flex items-center space-x-1 border border-slate-800 bg-slate-900/60 rounded px-1.5 py-0.5 text-slate-400 hover:text-white transition-colors">
-                  <span className="font-semibold text-slate-300">{selectedIncident.id}</span>
-                  <button
-                    id="btn-copy-incident-id"
-                    onClick={handleCopyId}
-                    className="p-0.5 hover:bg-slate-800 rounded transition-all cursor-pointer focus:outline-none flex items-center justify-center w-4 h-4 overflow-hidden relative"
-                    title="Copy Incident ID"
-                  >
-                    <AnimatePresence mode="wait">
-                      {copiedId ? (
-                        <motion.span
-                          key="check"
-                          initial={{ scale: 0.3, opacity: 0, rotate: -20 }}
-                          animate={{ scale: 1, opacity: 1, rotate: 0 }}
-                          exit={{ scale: 0.3, opacity: 0 }}
-                          transition={{ type: "spring", stiffness: 300, damping: 20 }}
-                          className="text-emerald-400 flex items-center justify-center"
-                        >
-                          <Icons.Check className="h-2.5 w-2.5 text-emerald-400" />
-                        </motion.span>
-                      ) : (
-                        <motion.span
-                          key="copy"
-                          initial={{ scale: 0.3, opacity: 0 }}
-                          animate={{ scale: 1, opacity: 1 }}
-                          exit={{ scale: 0.3, opacity: 0 }}
-                          transition={{ duration: 0.1 }}
-                          className="text-slate-400 flex items-center justify-center"
-                        >
-                          <Icons.Copy className="h-2.5 w-2.5" />
-                        </motion.span>
-                      )}
-                    </AnimatePresence>
-                  </button>
-                </div>
+                <button
+                  id="btn-copy-incident-id"
+                  onClick={handleCopyId}
+                  className="flex items-center space-x-1.5 border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 hover:text-white transition-all rounded px-2 py-0.5 font-mono text-[9.5px] font-bold cursor-pointer"
+                  title="Copy Incident ID"
+                >
+                  <span className="text-indigo-300">{selectedIncident.id}</span>
+                  <AnimatePresence mode="wait">
+                    {copiedId ? (
+                      <motion.span
+                        key="check"
+                        initial={{ scale: 0.3, opacity: 0, rotate: -20 }}
+                        animate={{ scale: 1, opacity: 1, rotate: 0 }}
+                        exit={{ scale: 0.3, opacity: 0 }}
+                        transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                        className="text-emerald-400 flex items-center justify-center font-mono text-[8px]"
+                      >
+                        <Icons.Check className="h-2.5 w-2.5 text-emerald-400 mr-1 shrink-0" />
+                        <span>COPIED</span>
+                      </motion.span>
+                    ) : (
+                      <motion.span
+                        key="copy"
+                        initial={{ scale: 0.3, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0.3, opacity: 0 }}
+                        transition={{ duration: 0.1 }}
+                        className="text-indigo-400 flex items-center justify-center font-mono text-[8px]"
+                      >
+                        <Icons.Copy className="h-2.5 w-2.5 text-indigo-400 mr-1 shrink-0" />
+                        <span>COPY ID</span>
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                </button>
 
                 <button
                   id="btn-share-incident"
@@ -2295,7 +3209,8 @@ Generated by SupportPilot AI Platform.
             { id: 'db', label: 'Database', icon: Icons.Database },
             { id: 'k8s', label: 'ArgoCD / K8s', icon: Icons.Network },
             { id: 'topology', label: 'Topology Map', icon: Icons.Activity },
-            { id: 'timeline', label: 'Investigation Timeline', icon: Icons.History }
+            { id: 'timeline', label: 'Investigation Timeline', icon: Icons.History },
+            { id: 'status_history', label: 'Status History', icon: Icons.GitCommit }
           ].map(tab => {
             const Icon = tab.icon;
             const isTabActive = telemetryTab === tab.id;
@@ -2733,6 +3648,66 @@ Generated by SupportPilot AI Platform.
                     );
                   });
                 })()}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 8: STATUS HISTORY TIMELINE */}
+          {telemetryTab === 'status_history' && (
+            <div className="space-y-4">
+              <div className="flex items-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-800/50 pb-3">
+                <div>
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-1.5">
+                    <Icons.GitCommit className="h-4 w-4 text-indigo-400" />
+                    <span>State Transition Log & SLA Milestones</span>
+                  </h3>
+                  <p className="text-[10px] text-slate-500 font-mono mt-0.5">Audit-grade chronological trace of status modifications and operator handoffs</p>
+                </div>
+              </div>
+
+              <div className="relative border-l border-slate-800 ml-4 pl-6 space-y-6 pt-2 pb-4">
+                {getStatusHistory(selectedIncident).map((hist, idx) => {
+                  const statusColors = {
+                    OPEN: 'border-rose-500 bg-rose-500/10 text-rose-400',
+                    INVESTIGATING: 'border-indigo-500 bg-indigo-500/10 text-indigo-400',
+                    ESCALATED: 'border-amber-500 bg-amber-500/10 text-amber-400',
+                    SOLVED: 'border-emerald-500 bg-emerald-500/10 text-emerald-400',
+                  };
+
+                  return (
+                    <div key={idx} className="relative group/status-item">
+                      {/* Connecting dot */}
+                      <div className={`absolute -left-[29.5px] top-1.5 h-2.5 w-2.5 rounded-full border-2 bg-slate-950 transition-all duration-300 z-10 ${
+                        hist.status === 'SOLVED' 
+                          ? 'border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' 
+                          : hist.status === 'ESCALATED'
+                            ? 'border-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+                            : hist.status === 'INVESTIGATING'
+                              ? 'border-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.4)]'
+                              : 'border-rose-500'
+                      }`} />
+
+                      <div className="rounded-xl border border-slate-800/40 bg-slate-900/10 p-3 hover:bg-slate-900/35 hover:border-slate-800/80 transition-all duration-300 shadow-sm">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className={`px-2 py-0.5 rounded text-[8.5px] font-mono font-bold border ${statusColors[hist.status]}`}>
+                            {hist.status}
+                          </span>
+                          <span className="text-[9px] font-mono text-slate-500">
+                            {new Date(hist.timestamp).toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="text-xxs text-slate-300 font-sans leading-relaxed">
+                          {hist.message || `Incident transitioned status to ${hist.status}.`}
+                        </div>
+                        <div className="mt-2 flex items-center space-x-1.5 text-[9px] font-mono text-slate-500 border-t border-slate-800/20 pt-1.5">
+                          <Icons.User className="h-3 w-3 text-slate-500" />
+                          <span>Operator:</span>
+                          <span className="text-slate-400 font-semibold">{hist.changedBy}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -3204,6 +4179,38 @@ Generated by SupportPilot AI Platform.
                   {responseSuccessMessage}
                 </div>
               )}
+
+              <div className="mb-3">
+                <label htmlFor="reply-template-select" className="block text-[9px] font-mono font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                  Select Reply Template
+                </label>
+                <div className="relative">
+                  <select
+                    id="reply-template-select"
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val) {
+                        setResponseDraft(val);
+                        window.dispatchEvent(new CustomEvent('show-toast', {
+                          detail: { message: "Injected selected response template!" }
+                        }));
+                      }
+                    }}
+                    defaultValue=""
+                    className="w-full rounded-lg bg-slate-950 border border-slate-800 text-[10px] font-sans text-slate-300 py-2 pl-2.5 pr-8 appearance-none focus:outline-none focus:border-indigo-500 cursor-pointer"
+                  >
+                    <option value="" disabled>-- Inject a professional response block --</option>
+                    {REPLY_TEMPLATES.map((tpl, i) => (
+                      <option key={i} value={tpl.text}>
+                        {tpl.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2.5 text-slate-500">
+                    <Icons.ChevronDown className="h-3.5 w-3.5" />
+                  </div>
+                </div>
+              </div>
               
               <div className="relative">
                 <textarea
@@ -3685,11 +4692,42 @@ Generated by SupportPilot AI Platform.
                   </div>
                 </div>
 
+                {/* Advanced Controls */}
+                <div className="mb-3 flex items-center justify-between gap-3 text-[10px] font-sans">
+                  {/* Auto-refresh */}
+                  <label className="flex items-center space-x-1.5 text-slate-300 select-none cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={isAutoRefreshActive}
+                      onChange={(e) => setIsAutoRefreshActive(e.target.checked)}
+                      className="rounded border-slate-700 bg-slate-950 text-indigo-600 focus:ring-0 focus:ring-offset-0 h-3 w-3 cursor-pointer"
+                    />
+                    <span className="flex items-center gap-1">
+                      <Icons.RefreshCw className={`h-3 w-3 text-indigo-400 ${isAutoRefreshActive ? 'animate-spin' : ''}`} />
+                      <span>Auto-Refresh (5m)</span>
+                    </span>
+                  </label>
+
+                  {/* Compare previous */}
+                  <label className="flex items-center space-x-1.5 text-slate-300 select-none cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={comparePrevious}
+                      onChange={(e) => setComparePrevious(e.target.checked)}
+                      className="rounded border-slate-700 bg-slate-950 text-emerald-600 focus:ring-0 focus:ring-offset-0 h-3 w-3 cursor-pointer"
+                    />
+                    <span className="flex items-center gap-1">
+                      <Icons.Layers className="h-3 w-3 text-emerald-400" />
+                      <span>Compare Previous Period</span>
+                    </span>
+                  </label>
+                </div>
+
                 {/* Stacked Bar Chart with Container ID for Download */}
-                <div id="severity-legend-chart-container" className="h-44 w-full bg-slate-950/40 rounded-xl p-2 border border-slate-800/60 relative">
+                <div id="severity-legend-chart-container" className="h-56 w-full bg-slate-950/40 rounded-xl p-2 border border-slate-800/60 relative">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={currentChartData}
+                    <ComposedChart
+                      data={preparedChartData}
                       margin={{ top: 5, right: 5, left: -25, bottom: 0 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
@@ -3751,7 +4789,32 @@ Generated by SupportPilot AI Platform.
                         cursor="pointer" 
                         onClick={(data) => handleSegmentClick('P3', data)} 
                       />
-                    </BarChart>
+                      {comparePrevious && (
+                        <Bar 
+                          dataKey="previousTotal" 
+                          fill="#3b82f6" 
+                          name="Prev Period Total" 
+                          opacity={0.35} 
+                          radius={[2, 2, 0, 0]} 
+                        />
+                      )}
+                      <Line 
+                        type="monotone" 
+                        dataKey="movingAverage" 
+                        stroke="#10b981" 
+                        strokeWidth={2} 
+                        dot={{ r: 1.5 }} 
+                        activeDot={{ r: 3 }} 
+                        name="7d Moving Avg" 
+                      />
+                      <Brush 
+                        dataKey="name" 
+                        height={15} 
+                        stroke="#334155" 
+                        fill="#0f172a" 
+                        startIndex={0} 
+                      />
+                    </ComposedChart>
                   </ResponsiveContainer>
                 </div>
 
@@ -3788,6 +4851,153 @@ Generated by SupportPilot AI Platform.
         )}
       </AnimatePresence>
 
+      {/* FLOATING QUICK SCRATCHPAD TRIGGER BUTTON */}
+      <div className="fixed bottom-5 right-5 z-40">
+        <button
+          onClick={() => setIsScratchpadOpen(true)}
+          className="h-12 w-12 rounded-full bg-indigo-600 hover:bg-indigo-500 hover:scale-105 active:scale-95 text-white flex items-center justify-center shadow-2xl border border-indigo-400/40 cursor-pointer transition-all relative group"
+          title="Open Quick Investigations Scratchpad (Ctrl+S)"
+        >
+          <Icons.FileEdit className="h-5.5 w-5.5 text-white" />
+          {scratchpadText.trim() && (
+            <span className="absolute top-0.5 right-0.5 h-3 w-3 rounded-full bg-emerald-500 border-2 border-slate-950 animate-pulse" />
+          )}
+          
+          {/* Tooltip */}
+          <div className="absolute right-14 bg-slate-950 border border-slate-800 text-[9px] font-mono font-bold text-slate-300 px-2 py-1 rounded shadow-xl whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
+            INVESTIGATIVE SCRATCHPAD (Ctrl+S)
+          </div>
+        </button>
+      </div>
+
+      {/* FLOATING GLASSMORPHIC SCRATCHPAD DRAWER */}
+      <AnimatePresence>
+        {isScratchpadOpen && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.5 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsScratchpadOpen(false)}
+              className="fixed inset-0 bg-slate-950 z-40 cursor-pointer"
+            />
+
+            {/* Sliding Drawer */}
+            <motion.div
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="fixed top-0 right-0 h-full w-[400px] bg-slate-950/95 border-l border-slate-800/80 shadow-2xl z-50 flex flex-col backdrop-blur-md p-5 font-mono text-xxs text-slate-300"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-slate-800/60 pb-3 mb-4">
+                <div className="flex items-center space-x-2">
+                  <Icons.FileEdit className="h-4.5 w-4.5 text-indigo-400" />
+                  <span className="font-display font-bold text-sm text-white uppercase tracking-wider">Quick Scratchpad</span>
+                </div>
+                <button
+                  onClick={() => setIsScratchpadOpen(false)}
+                  className="rounded-lg p-1 text-slate-500 hover:text-white hover:bg-slate-900 transition-all cursor-pointer"
+                  title="Close scratchpad"
+                >
+                  <Icons.X className="h-4.5 w-4.5" />
+                </button>
+              </div>
+
+              {/* Description */}
+              <div className="mb-3.5 leading-relaxed text-[9px] text-slate-400 bg-slate-900/40 rounded-lg p-2.5 border border-slate-900">
+                ✏️ Ephemeral workspace for investigation logs, query fragments, or findings. Automatically saved locally. Keep notes during active investigation.
+              </div>
+
+              {/* Text Area */}
+              <div className="flex-1 flex flex-col min-h-0 mb-4">
+                <textarea
+                  value={scratchpadText}
+                  onChange={(e) => handleUpdateScratchpad(e.target.value)}
+                  placeholder="Paste logs, track suspect microservices, jot down SQL queries, or draft immediate runbook findings here..."
+                  className="flex-1 w-full bg-slate-950 border border-slate-850 rounded-xl p-3 text-[10px] font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 resize-none leading-relaxed"
+                />
+              </div>
+
+              {/* Quick Action Helpers */}
+              <div className="mb-4">
+                <div className="text-[8px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 pl-1">Insert Diagnostic Snippets</div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    onClick={() => {
+                      const snippet = `\n--- Suspect Root Cause Analysis ---\nSUSPECT NODE: \nROOT CAUSE HYPOTHESIS: \nACTION TAKEN: \nTIME LOGGED: ${new Date().toISOString()}\n`;
+                      handleUpdateScratchpad(scratchpadText + snippet);
+                    }}
+                    className="py-1 px-2 rounded bg-slate-900 hover:bg-slate-850 border border-slate-800 text-[8px] text-indigo-400 font-bold transition-all text-left truncate cursor-pointer"
+                  >
+                    + Root Cause Template
+                  </button>
+                  <button
+                    onClick={() => {
+                      const snippet = `\n--- Database Investigation ---\nSuspect Row Lock: \nActive Connection Count: \nSlow Queries Analyzed: \n`;
+                      handleUpdateScratchpad(scratchpadText + snippet);
+                    }}
+                    className="py-1 px-2 rounded bg-slate-900 hover:bg-slate-850 border border-slate-800 text-[8px] text-emerald-400 font-bold transition-all text-left truncate cursor-pointer"
+                  >
+                    + DB Investigation Template
+                  </button>
+                  <button
+                    onClick={() => {
+                      const snippet = `\n--- Live Command Execution logs ---\nCWD: /opt/pilot\nCOMMANDS RUN:\n- kubectl logs -l app=billing-core --tail=100\n- kubectl get pods -n prod\n`;
+                      handleUpdateScratchpad(scratchpadText + snippet);
+                    }}
+                    className="py-1 px-2 rounded bg-slate-900 hover:bg-slate-850 border border-slate-800 text-[8px] text-amber-400 font-bold transition-all text-left truncate cursor-pointer"
+                  >
+                    + Live Commands Log
+                  </button>
+                  <button
+                    onClick={() => {
+                      const snippet = `\n--- NOC Escalation Request ---\nURGENCY: P0\nREQUIRED ACTION: \nCONTACT: alex.rivera@pilot.noc\n`;
+                      handleUpdateScratchpad(scratchpadText + snippet);
+                    }}
+                    className="py-1 px-2 rounded bg-slate-900 hover:bg-slate-850 border border-slate-800 text-[8px] text-rose-400 font-bold transition-all text-left truncate cursor-pointer"
+                  >
+                    + NOC Escalation Request
+                  </button>
+                </div>
+              </div>
+
+              {/* Actions Footer */}
+              <div className="border-t border-slate-900/60 pt-3 flex space-x-2 shrink-0">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(scratchpadText);
+                    window.dispatchEvent(new CustomEvent('show-toast', {
+                      detail: { message: 'Scratchpad notes copied to clipboard.' }
+                    }));
+                  }}
+                  disabled={!scratchpadText.trim()}
+                  className="flex-1 flex items-center justify-center space-x-1 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold disabled:opacity-45 disabled:cursor-not-allowed transition-all cursor-pointer"
+                >
+                  <Icons.Copy className="h-3.5 w-3.5" />
+                  <span>COPY NOTES</span>
+                </button>
+                <button
+                  onClick={() => {
+                    if (confirm('Are you sure you want to clear your ephemeral investigation findings? This action is irreversible.')) {
+                      handleUpdateScratchpad('');
+                    }
+                  }}
+                  disabled={!scratchpadText.trim()}
+                  className="py-2 px-3 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-800 text-rose-400 hover:text-rose-300 font-bold disabled:opacity-45 disabled:cursor-not-allowed transition-all cursor-pointer"
+                  title="Clear Scratchpad"
+                >
+                  <Icons.Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+    </div>
     </div>
   );
 }

@@ -113,6 +113,7 @@ export interface Incident {
   automaticReply?: string;
   csatScore?: number;
   lastModifiedBy?: string;
+  statusHistory?: Array<{ status: 'OPEN' | 'INVESTIGATING' | 'SOLVED' | 'ESCALATED'; timestamp: string; changedBy: string; message?: string }>;
 }
 
 export interface SupportAgent {

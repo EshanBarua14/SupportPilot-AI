@@ -94,6 +94,74 @@ interface HeatmapCell {
   failureRate: number;
 }
 
+const slaDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const slaTimeSlots = ["00:00", "02:00", "04:00", "06:00", "08:00", "10:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"];
+
+interface SlaHeatmapCell {
+  day: string;
+  dayIndex: number;
+  timeSlot: string;
+  timeSlotIndex: number;
+  breachCount: number;
+  impactedServices: string[];
+  severity: 'none' | 'low' | 'moderate' | 'high' | 'critical';
+  details: string;
+}
+
+const generateInitialSlaHeatmapData = (): SlaHeatmapCell[] => {
+  const cells: SlaHeatmapCell[] = [];
+  const services = ["Billing Core", "PCI Checkout Gateway", "External Webhooks Relay", "Auth Service", "Notification Stream"];
+
+  slaDays.forEach((day, dIdx) => {
+    slaTimeSlots.forEach((slot, tIdx) => {
+      let breachCount = 0;
+      
+      if ((day === "Wed" && (slot === "12:00" || slot === "14:00")) ||
+          (day === "Fri" && (slot === "18:00" || slot === "20:00"))) {
+        breachCount = Math.floor(Math.random() * 2) + 3;
+      } else if (day === "Mon" && slot === "10:00") {
+        breachCount = 2;
+      } else if (day === "Thu" && slot === "16:00") {
+        breachCount = 2;
+      } else if (dIdx < 5 && Math.random() > 0.65) {
+        breachCount = 1;
+      } else if (dIdx >= 5 && Math.random() > 0.9) {
+        breachCount = 1;
+      }
+
+      let severity: SlaHeatmapCell['severity'] = 'none';
+      if (breachCount === 1) severity = 'low';
+      else if (breachCount === 2) severity = 'moderate';
+      else if (breachCount === 3) severity = 'high';
+      else if (breachCount >= 4) severity = 'critical';
+
+      const cellServices: string[] = [];
+      if (breachCount > 0) {
+        const shuff = [...services].sort(() => 0.5 - Math.random());
+        for (let i = 0; i < breachCount; i++) {
+          cellServices.push(shuff[i % shuff.length]);
+        }
+      }
+
+      const details = breachCount > 0 
+        ? `Incident breach detected in: ${cellServices.join(", ")}. Response team engaged.`
+        : "All operations within standard 99.9% SLA threshold.";
+
+      cells.push({
+        day,
+        dayIndex: dIdx,
+        timeSlot: slot,
+        timeSlotIndex: tIdx,
+        breachCount,
+        impactedServices: cellServices,
+        severity,
+        details
+      });
+    });
+  });
+  return cells;
+};
+
 const generateInitialHeatmapData = (): HeatmapCell[] => {
   const cells: HeatmapCell[] = [];
   apiEndpoints.forEach((ep, epIdx) => {
@@ -147,6 +215,10 @@ export default function MetricsDashboard() {
   const [heatmapMetric, setHeatmapMetric] = React.useState<'latency' | 'failureRate'>('latency');
   const [selectedHeatCell, setSelectedHeatCell] = React.useState<HeatmapCell | null>(null);
 
+  // SLA Heatmap State
+  const [slaHeatmapCells, setSlaHeatmapCells] = React.useState<SlaHeatmapCell[]>(() => generateInitialSlaHeatmapData());
+  const [selectedSlaCell, setSelectedSlaCell] = React.useState<SlaHeatmapCell | null>(null);
+
   // Auto-polling interval effect
   React.useEffect(() => {
     if (!isLiveActive) return;
@@ -170,6 +242,36 @@ export default function MetricsDashboard() {
               ...cell,
               latency: Math.max(20, cell.latency + deltaLat),
               failureRate: Math.max(0, +(cell.failureRate + deltaFail).toFixed(2))
+            };
+          }));
+
+          // Randomize SLA heat cells
+          setSlaHeatmapCells(oldSlaCells => oldSlaCells.map(cell => {
+            if (Math.random() > 0.25) return cell; // 25% fluctuation rate
+            const change = Math.random() > 0.55 ? 1 : -1;
+            const newCount = Math.max(0, Math.min(5, cell.breachCount + change));
+            let severity: SlaHeatmapCell['severity'] = 'none';
+            if (newCount === 1) severity = 'low';
+            else if (newCount === 2) severity = 'moderate';
+            else if (newCount === 3) severity = 'high';
+            else if (newCount >= 4) severity = 'critical';
+
+            const services = ["Billing Core", "PCI Checkout Gateway", "External Webhooks Relay", "Auth Service", "Notification Stream"];
+            const cellServices: string[] = [];
+            if (newCount > 0) {
+              const shuff = [...services].sort(() => 0.5 - Math.random());
+              for (let i = 0; i < newCount; i++) {
+                cellServices.push(shuff[i % shuff.length]);
+              }
+            }
+            return {
+              ...cell,
+              breachCount: newCount,
+              severity,
+              impactedServices: cellServices,
+              details: newCount > 0 
+                ? `Incident breach detected in: ${cellServices.join(", ")}. Response team engaged.`
+                : "All operations within standard 99.9% SLA threshold."
             };
           }));
 
@@ -575,6 +677,194 @@ export default function MetricsDashboard() {
         <div className="mt-2 text-[9px] text-slate-500 flex justify-between items-center border-t border-slate-900/60 pt-2 font-mono">
           <span>MTTR TARGET: &lt; 15m</span>
           <span className="text-emerald-400 font-bold">11m CURRENT Avg</span>
+        </div>
+      </div>
+    );
+  };
+
+  const renderSlaPerformanceHeatmap = () => {
+    return (
+      <div className="bento-card-premium p-5 flex flex-col mt-4">
+        <div className="mb-4 flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800/40 pb-3">
+          <div>
+            <h4 className="font-display font-semibold text-xs text-rose-400 uppercase tracking-wider flex items-center space-x-2 text-white">
+              <Icons.Clock className="h-4.5 w-4.5 text-rose-400 animate-pulse" />
+              <span>SLA Performance Heatmap</span>
+            </h4>
+            <p className="text-[10px] text-slate-500 mt-0.5 font-mono">Displays daily intensity of SLA breaches to isolate recurring temporal failure patterns.</p>
+          </div>
+          
+          <div className="flex items-center space-x-2">
+            <span className="font-mono text-[9px] text-slate-400 font-bold uppercase">Grid View: 7 Days × 12 Intervals</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          {/* THE GRID */}
+          <div className="lg:col-span-9 overflow-x-auto">
+            <div className="min-w-[640px] space-y-1.5 select-none">
+              {/* Header Columns */}
+              <div className="flex items-center font-mono text-[8px] font-bold text-slate-500 uppercase tracking-wider">
+                <div className="w-[80px] shrink-0 text-left">Day of Week</div>
+                <div className="flex-1 flex justify-between">
+                  {slaTimeSlots.map(slot => (
+                    <div key={slot} className="w-12 text-center">{slot}</div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Rows */}
+              {slaDays.map((day, dayIdx) => {
+                return (
+                  <div key={day} className="flex items-center group">
+                    {/* Day name */}
+                    <div className="w-[80px] shrink-0 text-left pr-2">
+                      <div className="font-bold text-white text-[10px] leading-tight group-hover:text-rose-400 transition-colors uppercase">{day}</div>
+                    </div>
+
+                    {/* Cells */}
+                    <div className="flex-1 flex justify-between gap-1">
+                      {slaTimeSlots.map((slot, tIdx) => {
+                        const cell = slaHeatmapCells.find(c => c.dayIndex === dayIdx && c.timeSlotIndex === tIdx);
+                        if (!cell) return null;
+
+                        // Calculate cell color based on breach count
+                        let cellBg = 'bg-slate-950/40 border-slate-900 text-slate-600 hover:bg-slate-900/40 hover:border-slate-800';
+                        let valText = '-';
+
+                        if (cell.breachCount > 0) {
+                          valText = `${cell.breachCount}`;
+                          if (cell.breachCount === 1) {
+                            cellBg = 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/25';
+                          } else if (cell.breachCount === 2) {
+                            cellBg = 'bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/35';
+                          } else if (cell.breachCount === 3) {
+                            cellBg = 'bg-orange-500/30 text-orange-300 border border-orange-500/40 hover:bg-orange-500/45';
+                          } else {
+                            cellBg = 'bg-rose-600/35 text-rose-200 border border-rose-500/60 hover:bg-rose-600/50 animate-pulse font-extrabold';
+                          }
+                        }
+
+                        const isSelected = selectedSlaCell?.dayIndex === dayIdx && selectedSlaCell?.timeSlotIndex === tIdx;
+
+                        return (
+                          <button
+                            key={slot}
+                            onClick={() => setSelectedSlaCell(cell)}
+                            className={`w-12 h-8 rounded font-mono text-[9px] font-bold flex items-center justify-center transition-all cursor-pointer relative ${cellBg} ${
+                              isSelected ? 'ring-2 ring-rose-400 scale-105 z-10 border-white' : ''
+                            }`}
+                            title={`${day} @ ${slot} - SLA Breaches: ${cell.breachCount}`}
+                          >
+                            <span>{valText}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Legend */}
+            <div className="mt-4 flex flex-wrap items-center gap-4 text-[9px] font-mono border-t border-slate-900 pt-3">
+              <span className="text-slate-500 font-bold uppercase">Breach Intensity:</span>
+              <div className="flex items-center space-x-1.5">
+                <span className="h-3 w-5 rounded bg-slate-950/40 border border-slate-900 block" />
+                <span className="text-slate-400">0 Breaches (Nominal)</span>
+              </div>
+              <div className="flex items-center space-x-1.5">
+                <span className="h-3 w-5 rounded bg-emerald-500/10 border border-emerald-500/20 block" />
+                <span className="text-slate-400">1 Breach (Low Risk)</span>
+              </div>
+              <div className="flex items-center space-x-1.5">
+                <span className="h-3 w-5 rounded bg-amber-500/20 border border-amber-500/30 block" />
+                <span className="text-slate-400">2 Breaches (Moderate Risk)</span>
+              </div>
+              <div className="flex items-center space-x-1.5">
+                <span className="h-3 w-5 rounded bg-orange-500/30 border border-orange-500/40 block" />
+                <span className="text-slate-400">3 Breaches (High Risk)</span>
+              </div>
+              <div className="flex items-center space-x-1.5">
+                <span className="h-3 w-5 rounded bg-rose-600/35 border border-rose-500/60 block animate-pulse" />
+                <span className="text-slate-400">4+ Breaches (Critical SLA Breach)</span>
+              </div>
+            </div>
+          </div>
+
+          {/* INSPECTOR PANEL */}
+          <div className="lg:col-span-3 bg-slate-950/50 border border-slate-900 rounded-xl p-4 flex flex-col justify-between h-full min-h-[180px]">
+            {selectedSlaCell ? (
+              <div className="space-y-4">
+                <div className="border-b border-slate-900 pb-2.5">
+                  <span className="text-[8px] font-mono font-bold text-slate-500 uppercase block">INCIDENT TELEMETRY</span>
+                  <div className="font-display font-semibold text-[11px] text-white mt-1 uppercase flex items-center space-x-2">
+                    <span className="text-rose-400">{selectedSlaCell.day}</span>
+                    <span className="text-slate-600">•</span>
+                    <span className="text-indigo-400">{selectedSlaCell.timeSlot}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-3 font-mono text-[9px]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500 uppercase font-bold">Breach Count:</span>
+                    <span className={`px-2 py-0.5 rounded font-extrabold ${
+                      selectedSlaCell.breachCount === 0 ? 'bg-slate-900 text-slate-400' :
+                      selectedSlaCell.breachCount === 1 ? 'bg-emerald-500/10 text-emerald-400' :
+                      selectedSlaCell.breachCount === 2 ? 'bg-amber-500/10 text-amber-300' :
+                      'bg-rose-500/15 text-rose-400 animate-pulse'
+                    }`}>
+                      {selectedSlaCell.breachCount} SLA BREACHES
+                    </span>
+                  </div>
+
+                  {selectedSlaCell.breachCount > 0 && (
+                    <>
+                      <div>
+                        <span className="text-slate-500 uppercase font-bold block mb-1">Impacted Services:</span>
+                        <div className="flex flex-wrap gap-1">
+                          {selectedSlaCell.impactedServices.map((srv: string) => (
+                            <span key={srv} className="bg-slate-900 border border-slate-800 text-slate-300 px-1.5 py-0.5 rounded text-[8px] font-bold">
+                              {srv}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-slate-500 uppercase font-bold block mb-1">Impact Description:</span>
+                        <p className="text-slate-400 leading-normal text-[8.5px] font-sans">
+                          {selectedSlaCell.details}
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg bg-indigo-500/5 border border-indigo-500/10 p-2 text-indigo-400 leading-normal font-sans text-[8.5px]">
+                        <span className="font-bold font-mono text-[8px] uppercase text-indigo-300 block mb-0.5">Automated NOC Recommendation</span>
+                        Examine active CPU saturation and thread locked PostgreSQL rows. Recommended action: Route billing transactions to standby replication replica.
+                      </div>
+                    </>
+                  )}
+
+                  {selectedSlaCell.breachCount === 0 && (
+                    <div className="text-center py-6 text-slate-500 text-[10px] font-sans">
+                      <Icons.CheckCircle2 className="h-6 w-6 text-emerald-500 mx-auto mb-2 opacity-80" />
+                      All SLA targets achieved within this operational interval. No critical failures detected.
+                    </div>
+                  )}
+                </div>
+
+                <div className="text-slate-500 text-[8px] border-t border-slate-900/60 pt-2 flex items-center space-x-1 font-mono">
+                  <Icons.Info className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                  <span>Real-time NOC synchronizations actively monitor active SLA thresholds.</span>
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center text-center py-8 text-slate-500">
+                <Icons.Grid className="h-7 w-7 text-slate-600 mb-2.5 opacity-60" />
+                <span className="text-[10px] font-sans font-medium">Select any heatmap cell in the SLA Performance grid to inspect full SLA breach histories, impacted microservices, and root cause diagnostic telemetry.</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -1298,6 +1588,13 @@ export default function MetricsDashboard() {
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12">
           {renderEndpointHeatmap()}
+        </div>
+      </div>
+
+      {/* SLA PERFORMANCE HEATMAP */}
+      <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-12">
+          {renderSlaPerformanceHeatmap()}
         </div>
       </div>
 

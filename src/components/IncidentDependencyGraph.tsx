@@ -27,6 +27,7 @@ export default function IncidentDependencyGraph({ selectedIncident }: IncidentDe
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [selectedNode, setSelectedNode] = useState<DependencyNode | null>(null);
   const [dimensions, setDimensions] = useState({ width: 500, height: 320 });
+  const [traceBlastRadius, setTraceBlastRadius] = useState(false);
 
   // Handle auto-resizing based on parent container
   useEffect(() => {
@@ -140,16 +141,33 @@ export default function IncidentDependencyGraph({ selectedIncident }: IncidentDe
       .selectAll('line')
       .data(links)
       .enter().append('line')
-      .attr('stroke-width', d => d.status === 'normal' ? 1.5 : 2.5)
+      .attr('stroke-width', d => {
+        if (traceBlastRadius && (d.source === 'app' || d.target === 'app' || d.status === 'failed' || d.status === 'congested')) {
+          return 3.0;
+        }
+        return d.status === 'normal' ? 1.5 : 2.5;
+      })
       .attr('stroke', d => {
+        if (traceBlastRadius && (d.source === 'app' || d.target === 'app' || d.status === 'failed' || d.status === 'congested')) {
+          return '#fca5a5'; // Bright glowing red-pink for blast propagation path
+        }
         if (d.status === 'failed') return '#ef4444';
         if (d.status === 'congested') return '#f59e0b';
         return '#334155';
       })
       .attr('stroke-dasharray', d => {
+        if (traceBlastRadius && (d.source === 'app' || d.target === 'app' || d.status === 'failed' || d.status === 'congested')) {
+          return '6, 4';
+        }
         if (d.status === 'failed') return '4, 4';
         if (d.status === 'congested') return '5, 3';
         return 'none';
+      })
+      .attr('class', d => {
+        if (traceBlastRadius && (d.source === 'app' || d.target === 'app' || d.status === 'failed' || d.status === 'congested')) {
+          return 'animate-blast-link';
+        }
+        return '';
       })
       .attr('marker-end', d => `url(#arrow-${d.status})`);
 
@@ -187,13 +205,17 @@ export default function IncidentDependencyGraph({ selectedIncident }: IncidentDe
       );
 
     // Node Backdrop pulsing circle for degraded or failed nodes
-    node.filter(d => d.status !== 'healthy')
+    node.filter(d => d.status !== 'healthy' || (traceBlastRadius && (d.id === 'gateway' || d.id === 'client')))
       .append('circle')
-      .attr('r', 20)
-      .attr('fill', d => d.status === 'failed' ? '#ef4444' : '#f59e0b')
+      .attr('r', d => d.id === 'app' ? 26 : 20)
+      .attr('fill', d => {
+        if (d.status === 'failed') return '#ef4444';
+        if (d.status === 'degraded') return '#f59e0b';
+        return '#ef4444'; // Red blast wave for affected gateway/client
+      })
       .attr('opacity', 0.25)
       .attr('class', 'animate-ping')
-      .style('animation-duration', '1.8s');
+      .style('animation-duration', '1.6s');
 
     // Node Core Base Circle
     node.append('circle')
@@ -298,14 +320,46 @@ export default function IncidentDependencyGraph({ selectedIncident }: IncidentDe
     return () => {
       simulation.stop();
     };
-  }, [selectedIncident, dimensions]);
+  }, [selectedIncident, dimensions, traceBlastRadius]);
 
   return (
     <div ref={containerRef} className="w-full relative bg-slate-950/60 rounded-xl border border-slate-900 p-2 overflow-hidden">
-      {/* Interactive Canvas */}
-      <svg ref={svgRef} className="mx-auto block select-none bg-slate-950/20" />
+      <style>{`
+        @keyframes dashflow {
+          to {
+            stroke-dashoffset: -20;
+          }
+        }
+        .animate-blast-link {
+          animation: dashflow 0.8s linear infinite !important;
+        }
+      `}</style>
 
-      {/* Selected Node Details HUD */}
+      {/* Topology Toolbar */}
+      <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none z-10">
+        <div className="flex items-center space-x-2 bg-slate-950/90 border border-slate-800 rounded-lg p-1.5 pointer-events-auto shadow-lg">
+          <Icons.GitPullRequest className="h-3.5 w-3.5 text-indigo-400" />
+          <span className="font-mono text-[9px] font-bold text-slate-300 uppercase tracking-wider">Dependency Topology</span>
+        </div>
+
+        <button
+          onClick={() => setTraceBlastRadius(!traceBlastRadius)}
+          className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border font-mono text-[9px] font-bold cursor-pointer shadow-lg transition-all pointer-events-auto ${
+            traceBlastRadius
+              ? 'bg-rose-500/20 border-rose-500/50 text-rose-300 animate-pulse'
+              : 'bg-slate-950/90 border-slate-800 text-slate-400 hover:text-slate-200'
+          }`}
+          title="Highlight incident blast radius propagation paths"
+        >
+          <Icons.ShieldAlert className="h-3 w-3" />
+          <span>{traceBlastRadius ? 'BLAST RADIUS ACTIVE' : 'TRACE BLAST RADIUS'}</span>
+        </button>
+      </div>
+
+      {/* Interactive Canvas */}
+      <svg ref={svgRef} className="mx-auto block select-none bg-slate-950/20 pt-8" />
+
+      {/* Selected Node Details HUD / Blast Radius Panel */}
       {selectedNode ? (
         <div className="absolute bottom-2.5 left-2.5 right-2.5 bg-slate-950/90 border border-slate-800 rounded-lg p-2.5 font-mono text-xxs shadow-2xl flex items-center justify-between">
           <div className="space-y-0.5">
@@ -328,9 +382,28 @@ export default function IncidentDependencyGraph({ selectedIncident }: IncidentDe
             <span className="text-white font-bold text-[9.5px]">{selectedNode.metrics || 'Status Nominal'}</span>
           </div>
         </div>
+      ) : traceBlastRadius ? (
+        <div className="absolute bottom-2.5 left-2.5 right-2.5 bg-rose-950/90 border border-rose-500/30 rounded-lg p-2.5 font-mono text-xxs shadow-2xl flex items-center justify-between">
+          <div className="space-y-0.5">
+            <div className="flex items-center space-x-1.5">
+              <span className="text-rose-200 font-bold uppercase tracking-wider flex items-center gap-1">
+                <Icons.AlertTriangle className="h-3 w-3 text-rose-400 animate-pulse" />
+                <span>Blast Propagation Analysis</span>
+              </span>
+              <span className="px-1 rounded text-[7px] font-extrabold bg-rose-500/20 text-rose-400 border border-rose-500/30">HIGH PROPAGATION RISK</span>
+            </div>
+            <div className="text-slate-300 text-[8.5px] font-sans leading-relaxed mt-0.5">
+              Trigger: <span className="text-white font-bold">{selectedIncident.appName}</span> failure. Downstream propagation is impacting <span className="text-rose-300 font-bold">Ingress Gateway</span> & <span className="text-amber-300 font-semibold">PostgreSQL</span> transactions.
+            </div>
+          </div>
+          <div className="text-right shrink-0">
+            <span className="text-rose-400 text-[7px] block uppercase font-bold">Blast Index</span>
+            <span className="text-white font-bold text-xs">82%</span>
+          </div>
+        </div>
       ) : (
         <div className="absolute bottom-2 left-2 text-[8px] font-mono text-slate-500 pointer-events-none uppercase tracking-wider">
-          💡 Click and drag nodes to adjust structural physics. Click a node to inspect telemetry telemetry.
+          💡 Click and drag nodes to adjust structural physics. Click a node to inspect telemetry.
         </div>
       )}
     </div>
