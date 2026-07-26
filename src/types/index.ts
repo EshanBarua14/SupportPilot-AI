@@ -113,6 +113,9 @@ export interface Incident {
   automaticReply?: string;
   csatScore?: number;
   lastModifiedBy?: string;
+  tags?: string[];
+  cloudProvider?: 'AWS' | 'GCP' | 'Azure' | 'On-Prem';
+  environment?: 'Production' | 'Staging' | 'Development';
   statusHistory?: Array<{ status: 'OPEN' | 'INVESTIGATING' | 'SOLVED' | 'ESCALATED'; timestamp: string; changedBy: string; message?: string }>;
 }
 

@@ -2,6 +2,7 @@ import React from 'react';
 import { SimulatedMetricsDashboard } from '../data/simulation';
 import * as Icons from 'lucide-react';
 import { jsPDF } from 'jspdf';
+import * as d3 from 'd3';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -16,6 +17,59 @@ import {
   LineChart,
   Line
 } from 'recharts';
+
+const severityLevelsD3 = ['P0 - Critical', 'P1 - High', 'P2 - Medium', 'P3 - Low'];
+const hours24D3 = Array.from({ length: 24 }, (_, i) => i);
+
+interface D3HeatmapCell {
+  hour: number;
+  hourLabel: string;
+  severity: string;
+  count: number;
+  peakReason: string;
+}
+
+const generateD3HeatmapData = (): D3HeatmapCell[] => {
+  const data: D3HeatmapCell[] = [];
+  const reasons = [
+    'Database row lock contention during query execution',
+    'RAM starvation & OOMKilled container restarts',
+    'HTTP 502/504 gateway timeout during traffic spike',
+    'External carrier API latency degradation',
+    'Redis cache memory eviction threshold exceeded',
+    'Connection pool exhaustion under peak load'
+  ];
+
+  severityLevelsD3.forEach(sev => {
+    hours24D3.forEach(h => {
+      let base = Math.floor(Math.random() * 3);
+      
+      if ((h >= 10 && h <= 14) || (h >= 18 && h <= 21)) {
+        if (sev === 'P0 - Critical') base += Math.floor(Math.random() * 6) + 3;
+        else if (sev === 'P1 - High') base += Math.floor(Math.random() * 8) + 5;
+        else if (sev === 'P2 - Medium') base += Math.floor(Math.random() * 10) + 6;
+        else base += Math.floor(Math.random() * 12) + 8;
+      } else if (h >= 1 && h <= 5) {
+        if (sev === 'P0 - Critical') base = Math.random() > 0.8 ? 1 : 0;
+        else base = Math.floor(Math.random() * 2);
+      } else {
+        if (sev === 'P0 - Critical') base += Math.floor(Math.random() * 3);
+        else base += Math.floor(Math.random() * 5) + 1;
+      }
+
+      const hourStr = `${h.toString().padStart(2, '0')}:00`;
+      data.push({
+        hour: h,
+        hourLabel: hourStr,
+        severity: sev,
+        count: base,
+        peakReason: base > 5 ? reasons[Math.floor(Math.random() * reasons.length)] : 'Nominal operational volume'
+      });
+    });
+  });
+
+  return data;
+};
 
 const liveIncidentVelocityData = [
   { interval: '02:00', critical: 1, high: 3, medium: 5 },
@@ -218,6 +272,161 @@ export default function MetricsDashboard() {
   // SLA Heatmap State
   const [slaHeatmapCells, setSlaHeatmapCells] = React.useState<SlaHeatmapCell[]>(() => generateInitialSlaHeatmapData());
   const [selectedSlaCell, setSelectedSlaCell] = React.useState<SlaHeatmapCell | null>(null);
+
+  // D3 Severity Heatmap State
+  const d3SvgRef = React.useRef<SVGSVGElement | null>(null);
+  const d3LegendRef = React.useRef<SVGSVGElement | null>(null);
+  const [d3Data, setD3Data] = React.useState<D3HeatmapCell[]>(() => generateD3HeatmapData());
+  const [hoveredD3Cell, setHoveredD3Cell] = React.useState<D3HeatmapCell | null>(null);
+  const [d3SeverityFilter, setD3SeverityFilter] = React.useState<string>('ALL');
+
+  React.useEffect(() => {
+    if (!d3SvgRef.current) return;
+
+    const svg = d3.select(d3SvgRef.current);
+    svg.selectAll('*').remove();
+
+    const filteredData = d3SeverityFilter === 'ALL'
+      ? d3Data
+      : d3Data.filter(d => d.severity.includes(d3SeverityFilter));
+
+    const activeSeverities = d3SeverityFilter === 'ALL'
+      ? severityLevelsD3
+      : severityLevelsD3.filter(s => s.includes(d3SeverityFilter));
+
+    const width = 840;
+    const height = activeSeverities.length * 40 + 50;
+    const margin = { top: 25, right: 20, bottom: 30, left: 100 };
+
+    svg.attr('viewBox', `0 0 ${width} ${height}`);
+
+    const xDomain = hours24D3.map(h => `${h.toString().padStart(2, '0')}:00`);
+    const xScale = d3.scaleBand()
+      .domain(xDomain)
+      .range([margin.left, width - margin.right])
+      .padding(0.08);
+
+    const yScale = d3.scaleBand()
+      .domain(activeSeverities)
+      .range([margin.top, height - margin.bottom])
+      .padding(0.12);
+
+    const maxCount = d3.max(d3Data, d => d.count) || 15;
+
+    const colorScale = d3.scaleSequential()
+      .domain([0, maxCount])
+      .interpolator(d3.interpolateYlOrRd);
+
+    // X Axis
+    const xAxis = d3.axisBottom(xScale)
+      .tickFormat(d => d.slice(0, 2))
+      .tickSize(0);
+
+    const xAxisG = svg.append('g')
+      .attr('transform', `translate(0, ${height - margin.bottom + 4})`)
+      .call(xAxis);
+
+    xAxisG.select('.domain').remove();
+    xAxisG.selectAll('text')
+      .attr('fill', '#94a3b8')
+      .attr('font-size', '9px')
+      .attr('font-family', 'monospace')
+      .attr('font-weight', 'bold');
+
+    // Y Axis
+    const yAxis = d3.axisLeft(yScale).tickSize(0);
+    const yAxisG = svg.append('g')
+      .attr('transform', `translate(${margin.left - 8}, 0)`)
+      .call(yAxis);
+
+    yAxisG.select('.domain').remove();
+    yAxisG.selectAll('text')
+      .attr('fill', (d: any) => {
+        if (d.includes('P0')) return '#f43f5e';
+        if (d.includes('P1')) return '#fb923c';
+        if (d.includes('P2')) return '#facc15';
+        return '#a855f7';
+      })
+      .attr('font-size', '9.5px')
+      .attr('font-family', 'monospace')
+      .attr('font-weight', 'bold');
+
+    // Cells
+    svg.append('g')
+      .selectAll('rect')
+      .data(filteredData)
+      .enter()
+      .append('rect')
+      .attr('x', d => xScale(d.hourLabel) || 0)
+      .attr('y', d => yScale(d.severity) || 0)
+      .attr('width', xScale.bandwidth())
+      .attr('height', yScale.bandwidth())
+      .attr('rx', 3)
+      .attr('ry', 3)
+      .attr('fill', d => d.count === 0 ? '#0b1120' : colorScale(d.count))
+      .attr('stroke', d => d.count > 10 ? '#ef4444' : '#1e293b')
+      .attr('stroke-width', d => d.count > 10 ? 1.5 : 0.5)
+      .style('cursor', 'pointer')
+      .on('mouseover', (event, d) => {
+        d3.select(event.currentTarget)
+          .attr('stroke', '#6366f1')
+          .attr('stroke-width', 2);
+        setHoveredD3Cell(d);
+      })
+      .on('mouseout', (event, d) => {
+        d3.select(event.currentTarget)
+          .attr('stroke', d.count > 10 ? '#ef4444' : '#1e293b')
+          .attr('stroke-width', d.count > 10 ? 1.5 : 0.5);
+      });
+
+    // D3 Legend SVG
+    if (d3LegendRef.current) {
+      const legSvg = d3.select(d3LegendRef.current);
+      legSvg.selectAll('*').remove();
+
+      const legWidth = 220;
+      const legHeight = 32;
+      legSvg.attr('viewBox', `0 0 ${legWidth} ${legHeight}`);
+
+      const defs = legSvg.append('defs');
+      const linearGradient = defs.append('linearGradient')
+        .attr('id', 'd3-severity-heatmap-gradient');
+
+      const stops = [0, 0.25, 0.5, 0.75, 1];
+      stops.forEach(s => {
+        linearGradient.append('stop')
+          .attr('offset', `${s * 100}%`)
+          .attr('stop-color', colorScale(s * maxCount));
+      });
+
+      legSvg.append('rect')
+        .attr('x', 5)
+        .attr('y', 5)
+        .attr('width', legWidth - 10)
+        .attr('height', 8)
+        .attr('rx', 2)
+        .style('fill', 'url(#d3-severity-heatmap-gradient)');
+
+      legSvg.append('text')
+        .attr('x', 5)
+        .attr('y', 26)
+        .attr('fill', '#64748b')
+        .attr('font-size', '8px')
+        .attr('font-family', 'monospace')
+        .text('0 Min Density');
+
+      legSvg.append('text')
+        .attr('x', legWidth - 5)
+        .attr('y', 26)
+        .attr('text-anchor', 'end')
+        .attr('fill', '#f43f5e')
+        .attr('font-size', '8px')
+        .attr('font-family', 'monospace')
+        .attr('font-weight', 'bold')
+        .text(`${maxCount} Peak Load`);
+    }
+
+  }, [d3Data, d3SeverityFilter]);
 
   // Auto-polling interval effect
   React.useEffect(() => {
@@ -864,6 +1073,107 @@ export default function MetricsDashboard() {
                 <span className="text-[10px] font-sans font-medium">Select any heatmap cell in the SLA Performance grid to inspect full SLA breach histories, impacted microservices, and root cause diagnostic telemetry.</span>
               </div>
             )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderD3SeverityHeatmap = () => {
+    return (
+      <div className="bento-card-premium p-5 flex flex-col mt-4 space-y-4">
+        {/* Header Controls */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800/40 pb-3">
+          <div>
+            <h4 className="font-display font-semibold text-xs text-indigo-400 uppercase tracking-wider flex items-center space-x-2 text-white">
+              <Icons.Grid className="h-4.5 w-4.5 text-indigo-400" />
+              <span>D3-Powered Severity Load Density Heatmap</span>
+            </h4>
+            <p className="text-[10px] text-slate-500 mt-0.5 font-mono">
+              Visualizes 24-hour incident density and spatial saturation levels across P0-P3 severity tiers using D3 scales & interpolators.
+            </p>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            {['ALL', 'P0', 'P1', 'P2', 'P3'].map(sev => (
+              <button
+                key={sev}
+                onClick={() => setD3SeverityFilter(sev)}
+                className={`px-2.5 py-1 rounded text-[9px] font-mono font-bold transition-all cursor-pointer ${
+                  d3SeverityFilter === sev
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30 ring-2 ring-indigo-500/20'
+                    : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                {sev}
+              </button>
+            ))}
+
+            <button
+              onClick={() => setD3Data(generateD3HeatmapData())}
+              className="px-2.5 py-1 rounded text-[9px] font-mono border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 font-bold transition-all cursor-pointer flex items-center space-x-1"
+              title="Re-run D3 spatial density calculations"
+            >
+              <Icons.RefreshCw className="h-3 w-3" />
+              <span>Refresh Matrix</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-12 gap-4 items-stretch">
+          {/* D3 SVG Container */}
+          <div className="col-span-12 lg:col-span-9 bg-slate-950/60 border border-slate-900 rounded-xl p-3 overflow-x-auto">
+            <svg ref={d3SvgRef} className="w-full h-auto min-w-[650px]" />
+          </div>
+
+          {/* D3 Cell Inspector Panel */}
+          <div className="col-span-12 lg:col-span-3 bg-slate-950/60 border border-slate-900 rounded-xl p-3.5 flex flex-col justify-between">
+            <div>
+              <div className="text-[9px] font-mono font-bold text-indigo-400 uppercase tracking-wider mb-2 flex items-center justify-between border-b border-slate-900 pb-2">
+                <span>D3 Spatial Inspector</span>
+                <Icons.BarChart2 className="h-3.5 w-3.5 text-indigo-400" />
+              </div>
+
+              {hoveredD3Cell ? (
+                <div className="space-y-2.5 font-mono text-[9.5px]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Hour Window:</span>
+                    <span className="text-indigo-300 font-bold">{hoveredD3Cell.hourLabel} UTC</span>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Severity Tier:</span>
+                    <span className={`px-2 py-0.5 rounded font-extrabold ${
+                      hoveredD3Cell.severity.includes('P0') ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' :
+                      hoveredD3Cell.severity.includes('P1') ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                      'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                    }`}>
+                      {hoveredD3Cell.severity}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Incident Density:</span>
+                    <span className="text-white font-bold text-xs">{hoveredD3Cell.count} incidents/hr</span>
+                  </div>
+
+                  <div className="border-t border-slate-900 pt-2 text-[8.5px] font-sans text-slate-400">
+                    <span className="text-slate-500 font-mono text-[8px] uppercase block font-bold mb-0.5">Primary Root Cause Factor:</span>
+                    {hoveredD3Cell.peakReason}
+                  </div>
+                </div>
+              ) : (
+                <div className="py-6 text-center text-slate-500 font-sans text-[10px]">
+                  <Icons.MousePointer className="h-5 w-5 text-indigo-400 mx-auto mb-2 opacity-80 animate-bounce" />
+                  Hover over any D3 grid cell to inspect severity load density, hour windows, and primary failure drivers.
+                </div>
+              )}
+            </div>
+
+            <div className="border-t border-slate-900 pt-3 mt-3">
+              <span className="text-[8px] font-mono text-slate-500 uppercase tracking-wider block mb-1">D3 Density Scale Legend</span>
+              <svg ref={d3LegendRef} className="w-full h-8" />
+            </div>
           </div>
         </div>
       </div>
@@ -1595,6 +1905,13 @@ export default function MetricsDashboard() {
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12">
           {renderSlaPerformanceHeatmap()}
+        </div>
+      </div>
+
+      {/* D3-POWERED SEVERITY LOAD DENSITY HEATMAP */}
+      <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-12">
+          {renderD3SeverityHeatmap()}
         </div>
       </div>
 

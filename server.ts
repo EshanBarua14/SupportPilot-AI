@@ -30,6 +30,34 @@ function getAiClient() {
   return aiClient;
 }
 
+// Helper to call Gemini generateContent with automatic fallback models if primary model is unavailable or overloaded (503/429)
+async function generateContentWithFallback(ai: any, params: { model: string; contents: any; config?: any }) {
+  const modelsToTry = Array.from(new Set([
+    params.model,
+    'gemini-2.5-flash',
+    'gemini-1.5-flash',
+    'gemini-2.5-pro'
+  ].filter(Boolean)));
+
+  let lastError: any = null;
+  for (const modelCandidate of modelsToTry) {
+    try {
+      const response = await ai.models.generateContent({
+        ...params,
+        model: modelCandidate,
+      });
+      return response;
+    } catch (err: any) {
+      console.warn(`Gemini API call with model ${modelCandidate} failed (${err?.status || err?.message || err}). Trying fallback model...`);
+      lastError = err;
+      if (err?.message?.includes('GEMINI_API_KEY') || err?.status === 401) {
+        throw err;
+      }
+    }
+  }
+  throw lastError;
+}
+
 // ----------------- API ROUTES -----------------
 
 // 1. System Health Monitoring endpoint (simulates enterprise stack state)
@@ -111,7 +139,7 @@ Queue: ${JSON.stringify(incident.queueState, null, 2)}
 Run the correlation engine, align the log timestamps, isolate the bottleneck trace, and construct the investigation report. Ensure the confidence score is calculated mathematically.
 `;
 
-    const response = await ai.models.generateContent({
+    const response = await generateContentWithFallback(ai, {
       model: modelSelection,
       contents: promptText,
       config: {
@@ -131,6 +159,140 @@ Run the correlation engine, align the log timestamps, isolate the bottleneck tra
     res.status(500).json({ 
       error: error.message || "An error occurred during AI investigation.",
       requiresKey: error.message?.includes("GEMINI_API_KEY") 
+    });
+  }
+});
+
+// 2b. Auto-Tagging endpoint (Analyzes logs & incident parameters to suggest relevant tags)
+app.post('/api/auto-tag', async (req, res) => {
+  try {
+    const { incident, modelSelection = 'gemini-3.5-flash' } = req.body;
+    if (!incident) {
+      return res.status(400).json({ error: "No incident payload provided." });
+    }
+
+    const ai = getAiClient();
+    const systemPrompt = `You are SupportPilot AI's Log Auto-Tagging engine.
+Analyze the incident parameters, title, description, application name, severity, and log traces.
+Generate a JSON array of 3 to 6 concise, highly descriptive service and severity tags (e.g. "P0-Critical", "Postgres-Lock", "OOMKilled", "High-Latency", "BillingCore", "AuthService", "Gateway-Timeout", "K8s-Pod").
+Do NOT wrap your output in markdown code blocks. Return ONLY a pure JSON array of strings, e.g. ["P0-Critical", "Postgres-Lock", "OOMKilled"].`;
+
+    const promptText = `
+Title: ${incident.title}
+App Name: ${incident.appName}
+Severity: ${incident.severity}
+Status: ${incident.status}
+Description: ${incident.description}
+Logs Stream: ${JSON.stringify(incident.logs || []).slice(0, 1500)}
+`;
+
+    const response = await generateContentWithFallback(ai, {
+      model: modelSelection,
+      contents: promptText,
+      config: {
+        systemInstruction: systemPrompt,
+        temperature: 0.2,
+        responseMimeType: "application/json"
+      }
+    });
+
+    const responseText = response.text || "[]";
+    const cleanedText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
+    const tags = JSON.parse(cleanedText);
+    res.json({ tags: Array.isArray(tags) ? tags : [] });
+
+  } catch (error: any) {
+    // Intelligent fallback tag extractor if API key is missing or request fails
+    const inc = req.body.incident || {};
+    const fallbackTags: string[] = [];
+    if (inc.severity) fallbackTags.push(`${inc.severity}-Severity`);
+    if (inc.appName) fallbackTags.push(inc.appName.replace(/\s+/g, ''));
+    
+    const titleLower = (inc.title || '').toLowerCase();
+    const descLower = (inc.description || '').toLowerCase();
+    const combined = titleLower + ' ' + descLower;
+
+    if (combined.includes('oom') || combined.includes('memory')) fallbackTags.push('OOMKilled', 'RAM-Starvation');
+    if (combined.includes('lock') || combined.includes('postgres') || combined.includes('deadlock')) fallbackTags.push('Postgres-Lock', 'DB-Contention');
+    if (combined.includes('timeout') || combined.includes('latency') || combined.includes('502') || combined.includes('504')) fallbackTags.push('Gateway-Timeout', 'High-Latency');
+    if (combined.includes('webhook') || combined.includes('carrier')) fallbackTags.push('Webhook-Failure', 'API-Relay');
+    if (combined.includes('stripe') || combined.includes('billing')) fallbackTags.push('Payment-Gateway');
+
+    if (fallbackTags.length === 0) fallbackTags.push('Telemetry-Alert', 'Production-Outage');
+
+    // Deduplicate
+    const uniqueTags = Array.from(new Set(fallbackTags));
+    res.json({ tags: uniqueTags, fallback: true });
+  }
+});
+
+// 2c. Incident Summary endpoint (Uses Gemini to generate concise investigation progress summary)
+app.post('/api/incident-summary', async (req, res) => {
+  try {
+    const { incident, modelSelection = 'gemini-3.5-flash' } = req.body;
+    if (!incident) {
+      return res.status(400).json({ error: "No incident payload provided." });
+    }
+
+    const ai = getAiClient();
+    const systemPrompt = `You are SupportPilot AI's Investigation Summarizer.
+Analyze the provided incident, its telemetry logs, investigation notes, and status timeline.
+Produce a concise, professional executive progress summary of the investigation history so far.
+Return JSON with the following schema:
+{
+  "summary": "Executive summary paragraph highlighting current progress, primary anomalies found, and status...",
+  "keyDiscoveries": ["Discovery 1...", "Discovery 2..."],
+  "nextSteps": ["Next step 1...", "Next step 2..."],
+  "investigationPhase": "Root Cause Confirmed | Active Remediation | Initial Triage | Monitoring Recovery",
+  "confidenceScore": 92
+}
+Return ONLY valid JSON. Do not wrap in markdown code blocks.`;
+
+    const promptText = `
+Incident ID: ${incident.id}
+Title: ${incident.title}
+App: ${incident.appName}
+Severity: ${incident.severity}
+Status: ${incident.status}
+Assignee: ${incident.assignee || 'Unassigned'}
+Description: ${incident.description}
+Analysis: ${JSON.stringify(incident.analysis || {})}
+Logs Stream Count: ${(incident.logs || []).length}
+Recent Logs: ${JSON.stringify((incident.logs || []).slice(0, 8))}
+Notes: ${JSON.stringify(incident.notes || [])}
+`;
+
+    const response = await generateContentWithFallback(ai, {
+      model: modelSelection,
+      contents: promptText,
+      config: {
+        systemInstruction: systemPrompt,
+        temperature: 0.2,
+        responseMimeType: "application/json"
+      }
+    });
+
+    const responseText = response.text || "{}";
+    const cleanedText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
+    const data = JSON.parse(cleanedText);
+    res.json(data);
+
+  } catch (error: any) {
+    console.error("Incident Summary error:", error);
+    const inc = req.body.incident || {};
+    res.json({
+      summary: `Investigation for ${inc.id || 'Incident'} (${inc.appName || 'Service'}) is currently in ${inc.status || 'ACTIVE'} state. Telemetry logs indicate potential bottle-necking in ${inc.appName || 'the primary service'} with ${inc.severity || 'HIGH'} severity.`,
+      keyDiscoveries: [
+        `Service ${inc.appName || 'Target'} experienced anomalous latency and log error spikes.`,
+        `Telemetry traces correlated across database connection pools and gateway routers.`
+      ],
+      nextSteps: [
+        `Execute automated connection pool recycle playbook.`,
+        `Verify memory utilization metrics after restart.`
+      ],
+      investigationPhase: inc.status === 'SOLVED' ? 'Monitoring Recovery' : 'Root Cause Confirmed',
+      confidenceScore: 88,
+      fallback: true
     });
   }
 });
@@ -167,7 +329,7 @@ Do NOT wrap your output in markdown code blocks like \`\`\`json. Return pure JSO
     }));
     contents.push({ role: 'user', parts: [{ text: message }] });
 
-    const response = await ai.models.generateContent({
+    const response = await generateContentWithFallback(ai, {
       model: modelSelection,
       contents: contents,
       config: {
@@ -219,7 +381,7 @@ Remediation Action: ${suggestedFix}
 Synthesize a production-ready enterprise recovery runbook.
 `;
 
-    const response = await ai.models.generateContent({
+    const response = await generateContentWithFallback(ai, {
       model: modelSelection,
       contents: promptText,
       config: {

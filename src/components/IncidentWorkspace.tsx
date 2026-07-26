@@ -3,11 +3,18 @@ import { Incident, LogEntry, TimelineEvent, Tenant } from '../types';
 import { InitialIncidents, SeedTenants } from '../data/simulation';
 import * as Icons from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ComposedChart, Bar, Line, Brush, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
+import { ComposedChart, Bar, Line, AreaChart, Area, Brush, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
 import IncidentDetailsDrawer from './IncidentDetailsDrawer';
 import IncidentDependencyGraph from './IncidentDependencyGraph';
 import { jsPDF } from 'jspdf';
 import IncidentSummary from './IncidentSummary';
+import { IncidentSummaryWidget } from './IncidentSummaryWidget';
+import { VoiceTextInputWidget } from './VoiceTextInputWidget';
+import { LogCorrelationChart } from './LogCorrelationChart';
+import { IncidentD3Map } from './IncidentD3Map';
+import { IncidentStickyNotes } from './IncidentStickyNotes';
+import { VoiceCommandHistoryPanel } from './VoiceCommandHistoryPanel';
+import { QuickIncidentTemplateSelector, IncidentTemplate } from './QuickIncidentTemplateSelector';
 
 export const calculateSentimentScore = (incident: Incident): { score: number; label: string; color: string } => {
   let score = 70; // Base sentiment score (out of 100, where 100 is happy/neutral, and <50 is frustrated/angry)
@@ -48,6 +55,39 @@ export const calculateSentimentScore = (incident: Incident): { score: number; la
   } else {
     return { score, label: "Satisfied / Restored", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" };
   }
+};
+
+export const getIncidentTags = (incident: Incident): string[] => {
+  const tags: string[] = [];
+  if (incident.appName) tags.push(incident.appName);
+  if (incident.severity) tags.push(incident.severity);
+  if (incident.cloudProvider) {
+    tags.push(incident.cloudProvider);
+  } else {
+    if (incident.id.includes('001') || incident.id.includes('004') || incident.appName.includes('Billing')) tags.push('AWS');
+    else if (incident.id.includes('002') || incident.appName.includes('PCI')) tags.push('GCP');
+    else tags.push('Azure');
+  }
+
+  if (incident.environment) {
+    tags.push(incident.environment);
+  } else {
+    tags.push('Production');
+  }
+
+  if (incident.tags && incident.tags.length > 0) {
+    tags.push(...incident.tags);
+  } else {
+    const text = (incident.title + " " + incident.description).toLowerCase();
+    if (text.includes('oom') || text.includes('memory') || text.includes('heap')) tags.push('OOMKilled');
+    if (text.includes('lock') || text.includes('postgres') || text.includes('deadlock')) tags.push('Database Lock');
+    if (text.includes('502') || text.includes('gateway') || text.includes('checkout')) tags.push('502 Gateway');
+    if (text.includes('webhook') || text.includes('http') || text.includes('timeout')) tags.push('Webhook Congestion');
+    if (text.includes('redis') || text.includes('cache')) tags.push('Cache Eviction');
+    if (text.includes('ssl') || text.includes('tls') || text.includes('cert')) tags.push('SSL Expiry');
+  }
+
+  return Array.from(new Set(tags));
 };
 
 const REPLY_TEMPLATES = [
@@ -210,6 +250,122 @@ function highlightLogMessage(message: string): React.ReactNode {
   );
 }
 
+function IncidentLifecycleTimeline({ incident }: { incident: Incident }) {
+  const baseTime = new Date(incident.createdAt).getTime();
+
+  const stages = [
+    {
+      id: 'DETECTED',
+      label: 'Detected',
+      time: new Date(baseTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      offset: '+0m',
+      status: 'COMPLETED',
+      icon: Icons.AlertTriangle,
+      color: 'rose',
+      title: 'Automated Telemetry Anomaly Detected',
+      description: `Service monitor triggered alert for ${incident.appName} due to high failure rate and elevated response latencies.`,
+      logEvidence: (incident.logs && incident.logs.length > 0) ? incident.logs[0].message : 'Pod monitor detected threshold breach'
+    },
+    {
+      id: 'INVESTIGATING',
+      label: 'Investigating',
+      time: new Date(baseTime + 120000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      offset: '+2.0m',
+      status: incident.status === 'OPEN' || incident.status === 'INVESTIGATING' || incident.status === 'SOLVED' ? 'COMPLETED' : 'PENDING',
+      icon: Icons.Search,
+      color: 'amber',
+      title: 'AI Root Cause Agent & L3 Engineer Dispatched',
+      description: `Assigned to ${incident.assignee || 'Eshan Barua'}. Deep log correlation engine dispatched Jaeger distributed traces and db lock analysis.`,
+      logEvidence: (incident.logs && incident.logs.length > 1) ? incident.logs[1].message : 'Distributed Jaeger trace correlation initiated'
+    },
+    {
+      id: 'ESCALATED',
+      label: 'Escalated',
+      time: new Date(baseTime + 495000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      offset: '+8.25m',
+      status: incident.severity === 'CRITICAL' ? 'COMPLETED' : 'IN_PROGRESS',
+      icon: Icons.ArrowUpRight,
+      color: 'indigo',
+      title: 'P0 Executive Bridge Escalation Active',
+      description: `SLA timer remaining threshold reached. Incident severity set to ${incident.severity}. Cross-functional war room assembled.`,
+      logEvidence: (incident.logs && incident.logs.length > 2) ? incident.logs[2].message : 'PagerDuty P0 escalation page sent to infrastructure lead'
+    },
+    {
+      id: 'RESOLVED',
+      label: 'Resolved',
+      time: incident.status === 'SOLVED' 
+        ? new Date(baseTime + 1500000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        : 'Pending Recovery',
+      offset: incident.status === 'SOLVED' ? '+25.0m' : 'In Progress',
+      status: incident.status === 'SOLVED' ? 'COMPLETED' : 'IN_PROGRESS',
+      icon: Icons.CheckCircle2,
+      color: incident.status === 'SOLVED' ? 'emerald' : 'slate',
+      title: incident.status === 'SOLVED' ? 'Root Cause Remediated & Service Restored' : 'Remediation Playbook Executing',
+      description: incident.status === 'SOLVED' 
+        ? 'Remediation actions confirmed. Connection pool recycled, pod memory limits resized, and SLA verification passed.'
+        : 'Automated remediation playbook in progress. Awaiting telemetry health verification.',
+      logEvidence: incident.status === 'SOLVED' ? 'Service health check returned 200 OK across 100% of canary replicas' : 'Awaiting final SLA handshake'
+    }
+  ];
+
+  return (
+    <div className="bg-slate-950/80 border border-slate-800/80 rounded-xl p-4 space-y-3.5 my-2">
+      <div className="flex items-center justify-between border-b border-slate-800/50 pb-2.5">
+        <div className="flex items-center space-x-2">
+          <Icons.GitCommit className="h-4 w-4 text-indigo-400" />
+          <span className="font-display font-bold text-xs text-white uppercase tracking-wider">Vertical Incident Lifecycle Timeline</span>
+        </div>
+        <span className="text-[9px] font-mono text-slate-400 font-bold bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">
+          Active Lifecycle Phase: {incident.status}
+        </span>
+      </div>
+
+      <div className="relative pl-6 space-y-4 border-l-2 border-indigo-500/30 ml-2 py-1">
+        {stages.map((stg) => {
+          const Icon = stg.icon;
+          const isDone = stg.status === 'COMPLETED';
+          return (
+            <div key={stg.id} className="relative group">
+              {/* Node Bullet */}
+              <div className={`absolute -left-[31px] top-0.5 h-6 w-6 rounded-full flex items-center justify-center border text-xs shadow-md ${
+                isDone 
+                  ? stg.color === 'rose' ? 'bg-rose-950 border-rose-500 text-rose-400'
+                  : stg.color === 'amber' ? 'bg-amber-950 border-amber-500 text-amber-400'
+                  : stg.color === 'emerald' ? 'bg-emerald-950 border-emerald-500 text-emerald-400'
+                  : 'bg-indigo-950 border-indigo-500 text-indigo-400'
+                  : 'bg-slate-900 border-slate-700 text-slate-500'
+              }`}>
+                <Icon className="h-3 w-3" />
+              </div>
+
+              {/* Stage Card */}
+              <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-3 hover:border-indigo-500/40 transition-all space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <span className="font-mono text-xxs font-extrabold uppercase text-slate-200 tracking-wider">{stg.label}</span>
+                    <span className="px-1.5 py-0.5 rounded text-[8px] font-mono font-bold bg-slate-950 text-slate-400 border border-slate-800">
+                      {stg.offset}
+                    </span>
+                  </div>
+                  <span className="font-mono text-[9px] text-slate-500">{stg.time}</span>
+                </div>
+
+                <div className="font-sans text-xxs font-semibold text-slate-300">{stg.title}</div>
+                <p className="font-sans text-[10px] text-slate-400 leading-relaxed">{stg.description}</p>
+
+                <div className="bg-slate-950/80 border border-slate-800/60 rounded px-2.5 py-1 font-mono text-[9px] text-slate-400 flex items-center space-x-2 mt-1">
+                  <span className="text-indigo-400 font-bold shrink-0">Log Evidence:</span>
+                  <span className="truncate text-slate-300">{stg.logEvidence}</span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 interface IncidentWorkspaceProps {
   modelSelection: string;
   onAddAuditLog: (operator: string, action: string, module: string, status: 'SUCCESS' | 'FAILED' | 'PENDING_APPROVAL', payload: string) => void;
@@ -292,6 +448,69 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
 
   const [serviceFilter, setServiceFilter] = useState<string>('ALL');
   const servicesList = Array.from(new Set(incidents.map(i => i.appName).filter(Boolean)));
+
+  // Dynamic Tag Filtering State
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagMatchMode, setTagMatchMode] = useState<'ANY' | 'ALL'>('ANY');
+  const [tagSearchQuery, setTagSearchQuery] = useState<string>('');
+  const [isTagDrawerOpen, setIsTagDrawerOpen] = useState<boolean>(false);
+
+  // Diff View UI Toggle & Comparison State
+  const [isDiffViewActive, setIsDiffViewActive] = useState<boolean>(false);
+  const [diffPreset, setDiffPreset] = useState<'baseline_vs_peak' | 'node1_vs_node2' | 'custom'>('baseline_vs_peak');
+  const [diffLogIndexA, setDiffLogIndexA] = useState<number>(0);
+  const [diffLogIndexB, setDiffLogIndexB] = useState<number>(1);
+
+  // Auto-Tagging State
+  const [isAutoTaggingActive, setIsAutoTaggingActive] = useState<boolean>(true);
+  const [isAutoTaggingLoading, setIsAutoTaggingLoading] = useState<boolean>(false);
+  const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
+
+  const handleRunAutoTagging = async (incidentToTag?: Incident) => {
+    const targetInc = incidentToTag || selectedIncident;
+    if (!targetInc) return;
+    setIsAutoTaggingLoading(true);
+    try {
+      const res = await fetch('/api/auto-tag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ incident: targetInc, modelSelection })
+      });
+      const data = await res.json();
+      if (data.tags && Array.isArray(data.tags)) {
+        setSuggestedTags(data.tags);
+        if (isAutoTaggingActive) {
+          setIncidents(prev => prev.map(inc => {
+            if (inc.id === targetInc.id) {
+              const merged = Array.from(new Set([...(inc.tags || []), ...data.tags]));
+              return { ...inc, tags: merged };
+            }
+            return inc;
+          }));
+          setSelectedIncident(prev => {
+            if (prev.id === targetInc.id) {
+              const merged = Array.from(new Set([...(prev.tags || []), ...data.tags]));
+              return { ...prev, tags: merged };
+            }
+            return prev;
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Auto tagging error', e);
+    } finally {
+      setIsAutoTaggingLoading(false);
+    }
+  };
+
+  // Compute all available unique tags from all incidents
+  const allAvailableTags = React.useMemo(() => {
+    const set = new Set<string>();
+    incidents.forEach(inc => {
+      getIncidentTags(inc).forEach(t => set.add(t));
+    });
+    return Array.from(set).sort();
+  }, [incidents]);
 
   interface SavedView {
     id: string;
@@ -458,6 +677,15 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
         if (assigneeFilter === 'ALL' || assigneeFilter === 'SORT_NAME') return true;
         if (assigneeFilter === 'UNASSIGNED') return !inc.assignee || inc.assignee === 'Unassigned';
         return inc.assignee === assigneeFilter;
+      })
+      .filter((inc) => {
+        if (selectedTags.length === 0) return true;
+        const incTags = getIncidentTags(inc);
+        if (tagMatchMode === 'ALL') {
+          return selectedTags.every(t => incTags.includes(t));
+        } else {
+          return selectedTags.some(t => incTags.includes(t));
+        }
       });
 
     if (assigneeFilter === 'SORT_NAME') {
@@ -968,9 +1196,15 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
 
   const handleAppendQuickNote = () => {
     if (!quickNote.trim()) return;
-    
-    const noteText = quickNote.trim();
-    
+    handleAppendNoteText(quickNote.trim());
+    setQuickNote('');
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: "Note appended to incident summary and timeline!" }
+    }));
+  };
+
+  const handleAppendNoteText = (noteText: string) => {
+    if (!noteText || !noteText.trim()) return;
     setIncidents(prev => prev.map(inc => {
       if (inc.id === selectedIncident.id) {
         const cleanedDesc = inc.description.trim();
@@ -1002,10 +1236,21 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
       }
       return inc;
     }));
-    
-    setQuickNote('');
-    window.dispatchEvent(new CustomEvent('show-toast', {
-      detail: { message: "Note appended to incident summary and timeline!" }
+  };
+
+  const handleApplyTemplate = (tpl: IncidentTemplate) => {
+    setIncidents(prev => prev.map(inc => {
+      if (inc.id === selectedIncident.id) {
+        return {
+          ...inc,
+          title: `${tpl.name} [TEMPLATE RECURRING PATTERN]`,
+          severity: tpl.severity,
+          appName: tpl.appName,
+          description: `${tpl.description}\n\n[RECOMMENDED PLAYBOOK STEPS]:\n${tpl.playbookSteps.map(s => `• ${s}`).join('\n')}`,
+          tags: Array.from(new Set([...(inc.tags || []), ...tpl.tags]))
+        };
+      }
+      return inc;
     }));
   };
 
@@ -1351,7 +1596,7 @@ Generated by SupportPilot AI Platform.
   }, [incidents, onAddAuditLog]);
   
   // Tab within the Telemetry Panel
-  const [telemetryTab, setTelemetryTab] = useState<'logs' | 'metrics' | 'traces' | 'db' | 'k8s' | 'topology' | 'timeline' | 'status_history'>('logs');
+  const [telemetryTab, setTelemetryTab] = useState<'logs' | 'metrics' | 'traces' | 'db' | 'k8s' | 'topology' | 'timeline' | 'sticky_notes' | 'status_history'>('logs');
 
   // Real-time ticking state for SLA remaining timer calculation
   const [liveNow, setLiveNow] = useState(Date.now());
@@ -2079,7 +2324,7 @@ Generated by SupportPilot AI Platform.
       doc.text("Standard telemetry tracking started. Timeline entries will sync upon incident analysis.", 20, 200);
     }
 
-    // Footer signature block at bottom
+    // Footer signature block at bottom of Page 1
     doc.setFillColor(SECONDARY[0], SECONDARY[1], SECONDARY[2]);
     doc.rect(0, 282, 210, 15, 'F');
     doc.setFont("Helvetica", "bold");
@@ -2087,10 +2332,123 @@ Generated by SupportPilot AI Platform.
     doc.setTextColor(255, 255, 255);
     doc.text("SUPPORTPILOT INTEGRATED COGNITIVE SHIELD", 15, 291);
     doc.setFont("Helvetica", "normal");
-    doc.text("Page 1 of 1", 180, 291);
+    doc.text("Page 1 of 2", 180, 291);
+
+    // Page 2: Telemetry Logs, Scratchpad Findings, and Post-Mortem 5 Whys
+    doc.addPage();
+
+    // Page 2 Header Band
+    doc.setFillColor(SECONDARY[0], SECONDARY[1], SECONDARY[2]);
+    doc.rect(0, 0, 210, 25, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("POST-MORTEM TELEMETRY & INCIDENT LOG CORRELATION", 15, 14);
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(165, 180, 252);
+    doc.text(`Incident ID: ${selectedIncident.id} | System: ${selectedIncident.appName} | Service SLA: ${selectedIncident.slaLimitMins}m`, 15, 20);
+
+    // Section 4: Correlated Logs
+    doc.setTextColor(PRIMARY[0], PRIMARY[1], PRIMARY[2]);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("4. CORRELATED TELEMETRY LOG STREAMS", 15, 35);
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.5);
+    doc.line(15, 37, 195, 37);
+
+    let logY = 44;
+    const logsToInclude = (selectedIncident.logs || []).slice(0, 8);
+    if (logsToInclude.length > 0) {
+      doc.setFontSize(8);
+      doc.setFont("Courier", "normal");
+      logsToInclude.forEach(log => {
+        if (logY < 140) {
+          doc.setFillColor(248, 250, 252);
+          doc.rect(15, logY - 3, 180, 8, 'F');
+          
+          if (log.level === 'ERROR' || log.level === 'FATAL') {
+            doc.setTextColor(225, 29, 72);
+          } else if (log.level === 'WARN') {
+            doc.setTextColor(217, 119, 6);
+          } else {
+            doc.setTextColor(71, 85, 105);
+          }
+          
+          const timeStr = log.timestamp.slice(11, 19);
+          const lineStr = `[${timeStr}] [${log.level}] [${log.source}] ${log.message}`;
+          const splitLog = doc.splitTextToSize(lineStr, 175);
+          doc.text(splitLog, 17, logY + 2);
+          logY += 9 + ((splitLog.length - 1) * 3.5);
+        }
+      });
+    }
+
+    // Section 5: Investigation Scratchpad Notes
+    if (scratchpadText && scratchpadText.trim().length > 0) {
+      doc.setTextColor(PRIMARY[0], PRIMARY[1], PRIMARY[2]);
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(11);
+      doc.text("5. INVESTIGATION SCRATCHPAD & EPHEMERAL FINDINGS", 15, logY + 5);
+      doc.line(15, logY + 7, 195, logY + 7);
+
+      doc.setFillColor(241, 245, 249);
+      doc.rect(15, logY + 10, 180, 22, 'F');
+      doc.setDrawColor(203, 213, 225);
+      doc.rect(15, logY + 10, 180, 22, 'S');
+
+      doc.setFont("Courier", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2]);
+      const splitScratchpad = doc.splitTextToSize(scratchpadText.trim().slice(0, 300), 174);
+      doc.text(splitScratchpad, 18, logY + 15);
+
+      logY += 38;
+    } else {
+      logY += 10;
+    }
+
+    // Section 6: Post-Mortem 5-Whys Analysis
+    doc.setTextColor(PRIMARY[0], PRIMARY[1], PRIMARY[2]);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("6. POST-MORTEM 5-WHYS DECOMPOSITION & PREVENTION PLAN", 15, logY + 5);
+    doc.line(15, logY + 7, 195, logY + 7);
+
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(8.5);
+    doc.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2]);
+
+    const whysY = logY + 13;
+    const whysList = [
+      `1. Why did the service fail? -> High latency and HTTP 502/504 gateway timeout errors.`,
+      `2. Why did timeouts occur? -> Downstream ${selectedIncident.appName} service threads blocked on database lock / OOM.`,
+      `3. Why did memory/locking exhaust? -> Rapid traffic spike with unindexed query execution and unconstrained connection pool.`,
+      `4. Why was this unmitigated? -> Missing auto-kill circuit breaker and connection pool saturation limiters.`,
+      `5. Action Item: Implement connection pool circuit breakers, add DB query indices, and enforce memory limits.`
+    ];
+
+    let wy = whysY;
+    whysList.forEach(w => {
+      if (wy < 275) {
+        doc.text(w, 18, wy);
+        wy += 5.5;
+      }
+    });
+
+    // Page 2 Footer
+    doc.setFillColor(SECONDARY[0], SECONDARY[1], SECONDARY[2]);
+    doc.rect(0, 282, 210, 15, 'F');
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(255, 255, 255);
+    doc.text("SUPPORTPILOT POST-MORTEM REPORT", 15, 291);
+    doc.setFont("Helvetica", "normal");
+    doc.text("Page 2 of 2", 180, 291);
 
     // Save PDF
-    doc.save(`SupportPilot_Debrief_Incident_${selectedIncident.id}.pdf`);
+    doc.save(`SupportPilot_PostMortem_Report_${selectedIncident.id}.pdf`);
 
     onAddAuditLog(
       "Eshan Barua (CTO)",
@@ -2099,6 +2457,10 @@ Generated by SupportPilot AI Platform.
       "SUCCESS",
       `Compiled visual operational debrief report PDF for incident: ${selectedIncident.id}.`
     );
+
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `Post-Mortem PDF Report generated and downloaded for ${selectedIncident.id}!` }
+    }));
   };
 
   // Download Report as Markdown File
@@ -2383,7 +2745,7 @@ Generated by SupportPilot AI Platform.
         </div>
 
         {/* Service Filter Dropdown */}
-        <div className="mb-3 flex items-center justify-between gap-1.5">
+        <div className="mb-2.5 flex items-center justify-between gap-1.5">
           <div className="flex-1 flex items-center space-x-1.5 bg-slate-900/10 border border-slate-900 rounded-lg p-1.5">
             <label htmlFor="service-filter" className="text-[9px] font-mono text-slate-500 uppercase tracking-wider shrink-0 flex items-center space-x-1 pl-1">
               <Icons.Cpu className="h-3 w-3 text-indigo-400" />
@@ -2405,6 +2767,66 @@ Generated by SupportPilot AI Platform.
                 <Icons.ChevronDown className="h-3 w-3" />
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Dynamic Tag Filter Panel */}
+        <div className="mb-3 bg-slate-950/60 border border-slate-800/80 rounded-lg p-2 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-1.5 text-[9px] font-mono text-indigo-300 uppercase tracking-wider font-bold">
+              <Icons.Tag className="h-3 w-3 text-indigo-400" />
+              <span>Dynamic Tag Filter</span>
+              {selectedTags.length > 0 && (
+                <span className="bg-indigo-600 text-white text-[8px] px-1.5 py-0.2 rounded-full">
+                  {selectedTags.length}
+                </span>
+              )}
+            </div>
+            
+            <div className="flex items-center space-x-1">
+              <button
+                onClick={() => setTagMatchMode(tagMatchMode === 'ANY' ? 'ALL' : 'ANY')}
+                className="text-[8px] font-mono px-1.5 py-0.5 rounded border border-slate-800 bg-slate-900 text-slate-400 hover:text-indigo-300 cursor-pointer"
+                title="Toggle Tag Matching Conjunction Mode (ANY vs ALL)"
+              >
+                {tagMatchMode}
+              </button>
+              {selectedTags.length > 0 && (
+                <button
+                  onClick={() => setSelectedTags([])}
+                  className="text-[8px] font-mono text-rose-400 hover:text-rose-300 cursor-pointer px-1"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Quick Tag Pills */}
+          <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto custom-scrollbar p-0.5">
+            {allAvailableTags.map(tag => {
+              const isSelected = selectedTags.includes(tag);
+              return (
+                <button
+                  key={tag}
+                  onClick={() => {
+                    if (isSelected) {
+                      setSelectedTags(selectedTags.filter(t => t !== tag));
+                    } else {
+                      setSelectedTags([...selectedTags, tag]);
+                    }
+                  }}
+                  className={`text-[9px] font-mono px-1.5 py-0.5 rounded border transition-all cursor-pointer flex items-center space-x-1 ${
+                    isSelected
+                      ? 'bg-indigo-600 border-indigo-400 text-white font-bold shadow-sm shadow-indigo-600/30'
+                      : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                  }`}
+                >
+                  <span>#{tag}</span>
+                  {isSelected && <Icons.X className="h-2.5 w-2.5 ml-0.5" />}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -3198,6 +3620,169 @@ Generated by SupportPilot AI Platform.
               {selectedIncident.description}
             </div>
           </div>
+
+          {/* IMPACT ASSESSMENT WIDGET */}
+          <div className="mt-3.5 bg-slate-950/80 border border-indigo-500/20 rounded-xl p-3.5 shadow-lg relative overflow-hidden">
+            <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-slate-800/40">
+              <div className="flex items-center space-x-2">
+                <Icons.ShieldAlert className="h-4 w-4 text-rose-400 animate-pulse" />
+                <span className="font-display font-bold text-xs text-white uppercase tracking-wider">Impact Assessment & Degradation Meter</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <span className="text-[9px] font-mono font-bold text-slate-400">Log Correlation Confidence: 98%</span>
+                <span className="rounded bg-rose-500/10 border border-rose-500/30 px-2 py-0.5 text-[8.5px] font-mono font-extrabold text-rose-400">
+                  {selectedIncident.severity === 'CRITICAL' ? 'CRITICAL OUTAGE' : 'DEGRADED SERVICE'}
+                </span>
+              </div>
+            </div>
+
+            {/* Progress Bar indicating Service Degradation */}
+            {(() => {
+              let degradationPct = 35;
+              if (selectedIncident.severity === 'CRITICAL') degradationPct = 85;
+              else if (selectedIncident.severity === 'HIGH') degradationPct = 62;
+              else if (selectedIncident.severity === 'MEDIUM') degradationPct = 38;
+              else degradationPct = 18;
+
+              if (selectedIncident.status === 'SOLVED') degradationPct = 0;
+
+              return (
+                <div className="space-y-1.5 mb-3.5">
+                  <div className="flex items-center justify-between text-xxs font-mono">
+                    <span className="text-slate-400 flex items-center space-x-1">
+                      <span>Current Service Degradation Level:</span>
+                    </span>
+                    <span className={`font-bold ${degradationPct > 70 ? 'text-rose-400 font-extrabold' : degradationPct > 40 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                      {degradationPct}% DEGRADED
+                    </span>
+                  </div>
+                  <div className="h-2.5 w-full bg-slate-900 rounded-full overflow-hidden p-[1px] border border-slate-800">
+                    <div
+                      className={`h-full rounded-full transition-all duration-700 ${
+                        degradationPct > 70
+                          ? 'bg-gradient-to-r from-amber-500 via-rose-500 to-red-600 shadow-lg shadow-rose-500/50'
+                          : degradationPct > 40
+                            ? 'bg-gradient-to-r from-emerald-500 via-amber-500 to-amber-600'
+                            : 'bg-emerald-500'
+                      }`}
+                      style={{ width: `${degradationPct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Summary of Affected Systems based on Log Correlations */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-1">
+              <div className="bg-slate-900/60 border border-slate-800/60 rounded-lg p-2 font-mono text-xxs">
+                <div className="text-slate-500 uppercase tracking-wider text-[8px] mb-1">Primary Affected Service</div>
+                <div className="font-bold text-slate-200 flex items-center justify-between">
+                  <span>{selectedIncident.appName}</span>
+                  <span className="text-rose-400 font-extrabold text-[8px] bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20">CRITICAL</span>
+                </div>
+                <div className="text-[8.5px] text-slate-400 mt-1">Latency: 3,420ms (P99 limit)</div>
+              </div>
+
+              <div className="bg-slate-900/60 border border-slate-800/60 rounded-lg p-2 font-mono text-xxs">
+                <div className="text-slate-500 uppercase tracking-wider text-[8px] mb-1">Correlated DB Cluster</div>
+                <div className="font-bold text-slate-200 flex items-center justify-between">
+                  <span>PostgreSQL Primary</span>
+                  <span className="text-amber-400 font-extrabold text-[8px] bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">LOCK DEGRADED</span>
+                </div>
+                <div className="text-[8.5px] text-slate-400 mt-1">Active Locks: 5 query sessions</div>
+              </div>
+
+              <div className="bg-slate-900/60 border border-slate-800/60 rounded-lg p-2 font-mono text-xxs">
+                <div className="text-slate-500 uppercase tracking-wider text-[8px] mb-1">Downstream Gateway</div>
+                <div className="font-bold text-slate-200 flex items-center justify-between">
+                  <span>Ingress Nginx Relay</span>
+                  <span className="text-indigo-400 font-extrabold text-[8px] bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">WARN 502</span>
+                </div>
+                <div className="text-[8.5px] text-slate-400 mt-1">Error Ratio: 14.2% requests</div>
+              </div>
+            </div>
+          </div>
+
+          {/* AUTO-TAGGING & AI TAG SUGGESTIONS PANEL */}
+          <div className="mt-3 bg-slate-950/60 border border-slate-800/60 rounded-xl p-3 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Icons.Tag className="h-3.5 w-3.5 text-indigo-400" />
+                <span className="font-mono text-xxs font-bold text-slate-300 uppercase tracking-wider">LLM Log Auto-Tagging</span>
+                
+                {/* Auto-Tagging Toggle */}
+                <button
+                  onClick={() => setIsAutoTaggingActive(!isAutoTaggingActive)}
+                  className={`ml-2 px-2 py-0.5 rounded-full text-[8.5px] font-mono font-bold flex items-center space-x-1 cursor-pointer transition-all border ${
+                    isAutoTaggingActive
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                      : 'bg-slate-900 border-slate-800 text-slate-500'
+                  }`}
+                  title="Toggle LLM Auto-Tagging on incident logs"
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full ${isAutoTaggingActive ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
+                  <span>Auto-Tagging: {isAutoTaggingActive ? 'ON' : 'OFF'}</span>
+                </button>
+              </div>
+
+              <button
+                onClick={() => handleRunAutoTagging()}
+                disabled={isAutoTaggingLoading}
+                className="px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 font-mono text-xxs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow"
+              >
+                <Icons.Sparkles className={`h-3 w-3 text-amber-400 ${isAutoTaggingLoading ? 'animate-spin' : ''}`} />
+                <span>{isAutoTaggingLoading ? 'Analyzing Logs...' : 'Suggest AI Tags'}</span>
+              </button>
+            </div>
+
+            {/* Active Tags & Suggested Tags */}
+            <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+              {selectedIncident.tags && selectedIncident.tags.length > 0 ? (
+                selectedIncident.tags.map(t => (
+                  <span key={t} className="px-2 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 font-mono text-[9px] font-bold flex items-center space-x-1">
+                    <Icons.Tag className="h-2.5 w-2.5 text-indigo-400" />
+                    <span>#{t}</span>
+                  </span>
+                ))
+              ) : (
+                <span className="text-[9px] font-mono text-slate-500">No active tags. Click "Suggest AI Tags" to analyze logs.</span>
+              )}
+
+              {suggestedTags.length > 0 && (
+                <div className="w-full mt-2 pt-2 border-t border-slate-800/40 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[8.5px] font-mono text-amber-400 font-bold uppercase flex items-center space-x-1 mr-1">
+                    <Icons.Sparkles className="h-2.5 w-2.5 text-amber-400" />
+                    <span>AI Suggested:</span>
+                  </span>
+                  {suggestedTags.map(st => (
+                    <button
+                      key={st}
+                      onClick={() => {
+                        const merged = Array.from(new Set([...(selectedIncident.tags || []), st]));
+                        setSelectedIncident({ ...selectedIncident, tags: merged });
+                        setIncidents(prev => prev.map(inc => inc.id === selectedIncident.id ? { ...inc, tags: merged } : inc));
+                      }}
+                      className="px-2 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 font-mono text-[8.5px] font-bold flex items-center space-x-1 cursor-pointer transition-all"
+                      title="Click to attach tag"
+                    >
+                      <Icons.Plus className="h-2.5 w-2.5 text-amber-400" />
+                      <span>#{st}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* QUICK INCIDENT PATTERN TEMPLATES SELECTOR */}
+          <QuickIncidentTemplateSelector onApplyTemplate={handleApplyTemplate} />
+
+          {/* GEMINI INCIDENT PROGRESS SUMMARY WIDGET */}
+          <IncidentSummaryWidget
+            incident={selectedIncident}
+            modelSelection={modelSelection}
+            onAppendNote={(noteText) => handleAppendNoteText(noteText)}
+          />
         </div>
 
         {/* Telemetry Tabs Selector */}
@@ -3210,6 +3795,7 @@ Generated by SupportPilot AI Platform.
             { id: 'k8s', label: 'ArgoCD / K8s', icon: Icons.Network },
             { id: 'topology', label: 'Topology Map', icon: Icons.Activity },
             { id: 'timeline', label: 'Investigation Timeline', icon: Icons.History },
+            { id: 'sticky_notes', label: 'Sticky Notes', icon: Icons.StickyNote },
             { id: 'status_history', label: 'Status History', icon: Icons.GitCommit }
           ].map(tab => {
             const Icon = tab.icon;
@@ -3237,6 +3823,9 @@ Generated by SupportPilot AI Platform.
           {/* TAB 1: LOG STREAMS */}
           {telemetryTab === 'logs' && (
             <div className="space-y-3">
+              {/* RECHARTS LOG ERROR FREQUENCY CORRELATION CHART */}
+              <LogCorrelationChart logs={filteredLogs} />
+
               <div className="flex items-center justify-between gap-2 border-b border-slate-800/50 pb-2">
                 <div className="flex items-center space-x-1.5">
                   <span className="text-xxs font-mono text-slate-500">Filter Level:</span>
@@ -3257,6 +3846,20 @@ Generated by SupportPilot AI Platform.
                   </div>
                 </div>
                 <div className="flex items-center space-x-2">
+                  <button
+                    id="btn-diff-view-toggle"
+                    onClick={() => setIsDiffViewActive(prev => !prev)}
+                    className={`rounded px-2 py-1 font-mono text-[9px] font-semibold uppercase flex items-center space-x-1 border transition-all cursor-pointer ${
+                      isDiffViewActive 
+                        ? 'bg-indigo-600 border-indigo-400 text-white font-bold shadow-md shadow-indigo-600/30 ring-2 ring-indigo-500/20' 
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'
+                    }`}
+                    title="Toggle side-by-side log segment Diff View comparison"
+                  >
+                    <Icons.GitCompare className="h-3 w-3 text-indigo-300" />
+                    <span>Diff View: {isDiffViewActive ? 'ON' : 'OFF'}</span>
+                  </button>
+
                   <button
                     id="btn-auto-scroll-toggle"
                     onClick={() => setAutoScrollLogs(prev => !prev)}
@@ -3284,60 +3887,182 @@ Generated by SupportPilot AI Platform.
                 </div>
               </div>
 
-              <div ref={logContainerRef} className="rounded-lg border border-slate-900 bg-slate-950/80 p-3 font-mono text-[10px] leading-relaxed space-y-1.5 max-h-[220px] overflow-y-auto select-text">
-                {filteredLogs.map((line, i) => {
-                  const isErr = line.level === 'FATAL' || line.level === 'ERROR';
-                  const isWarn = line.level === 'WARN';
-                  
-                  const lowercaseMsg = line.message.toLowerCase();
-                  const containsCritical = lowercaseMsg.includes('critical') || 
-                                           lowercaseMsg.includes('fatal') || 
-                                           lowercaseMsg.includes('timeout') || 
-                                           lowercaseMsg.includes('exception') || 
-                                           isErr;
-
-                  const logLineContent = (
-                    <div className="flex items-start space-x-2 w-full">
-                      <div className="flex items-center space-x-1 shrink-0 text-slate-600 font-mono text-[9px]">
-                        <span>{line.timestamp.slice(11, 19)}</span>
-                        <span className="text-indigo-400/90 font-medium" title="Time elapsed relative to incident start">({getRelativeTimestamp(line.timestamp, selectedIncident.createdAt)})</span>
-                      </div>
-                      <span className={`shrink-0 font-bold ${
-                        isErr ? 'text-rose-500' : isWarn ? 'text-amber-500' : 'text-slate-400'
-                      }`}>
-                        [{line.level}]
+              {/* SIDE-BY-SIDE DIFF VIEW COMPARISON MODE */}
+              {isDiffViewActive ? (
+                <div className="space-y-2.5 rounded-xl border border-indigo-500/30 bg-slate-950/90 p-3 shadow-2xl">
+                  {/* Preset Selector & Diff Stats Header */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-2">
+                    <div className="flex items-center space-x-1.5">
+                      <span className="text-[9px] font-mono font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-1">
+                        <Icons.GitCompare className="h-3 w-3" />
+                        <span>Log Segment Diff Presets:</span>
                       </span>
-                      <span className="text-slate-500 font-semibold shrink-0">[{line.source}]</span>
-                      <span className={isErr ? 'text-rose-300 font-semibold' : 'text-slate-300'}>
-                        {highlightLogMessage(line.message)}
-                      </span>
-                    </div>
-                  );
-
-                  if (containsCritical) {
-                    return (
-                      <motion.div
-                        key={i}
-                        initial={{ backgroundColor: "rgba(239, 68, 68, 0.12)", boxShadow: "0 0 10px rgba(239, 68, 68, 0.25)" }}
-                        animate={{ backgroundColor: "rgba(0, 0, 0, 0)", boxShadow: "0 0 0px rgba(0,0,0,0)" }}
-                        transition={{ duration: 2.5, ease: "easeOut" }}
-                        className="rounded px-1.5 py-0.5 border border-rose-500/10"
+                      <button
+                        onClick={() => setDiffPreset('baseline_vs_peak')}
+                        className={`px-2 py-0.5 rounded text-[9px] font-mono border transition-all cursor-pointer ${
+                          diffPreset === 'baseline_vs_peak'
+                            ? 'bg-indigo-600 border-indigo-400 text-white font-bold'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
                       >
-                        {logLineContent}
-                      </motion.div>
-                    );
-                  }
-
-                  return (
-                    <div key={i} className="px-1.5 py-0.5">
-                      {logLineContent}
+                        Nominal Baseline vs Outage Peak
+                      </button>
+                      <button
+                        onClick={() => setDiffPreset('node1_vs_node2')}
+                        className={`px-2 py-0.5 rounded text-[9px] font-mono border transition-all cursor-pointer ${
+                          diffPreset === 'node1_vs_node2'
+                            ? 'bg-indigo-600 border-indigo-400 text-white font-bold'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        Node-01 vs Node-02 Replica
+                      </button>
+                      <button
+                        onClick={() => setDiffPreset('custom')}
+                        className={`px-2 py-0.5 rounded text-[9px] font-mono border transition-all cursor-pointer ${
+                          diffPreset === 'custom'
+                            ? 'bg-indigo-600 border-indigo-400 text-white font-bold'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        Custom Lines
+                      </button>
                     </div>
-                  );
-                })}
-                {filteredLogs.length === 0 && (
-                  <div className="text-center py-4 text-slate-500">No telemetry log traces matched your search query.</div>
-                )}
-              </div>
+
+                    {/* Diff Metrics Counter Pills */}
+                    <div className="flex items-center space-x-2 text-[9px] font-mono">
+                      <span className="bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 px-2 py-0.5 rounded font-bold">
+                        +3 Additions / Errors
+                      </span>
+                      <span className="bg-rose-950/80 border border-rose-500/40 text-rose-300 px-2 py-0.5 rounded font-bold">
+                        -2 Deletions / Absent Baseline
+                      </span>
+                      <span className="bg-amber-950/80 border border-amber-500/40 text-amber-300 px-2 py-0.5 rounded font-bold">
+                        ~1 State Modification
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Side by Side Log Comparison Columns */}
+                  <div className="grid grid-cols-2 gap-3 text-[10px] font-mono max-h-[220px] overflow-y-auto custom-scrollbar">
+                    {/* LEFT COLUMN: Segment A (Baseline) */}
+                    <div className="space-y-1.5 rounded-lg border border-slate-800 bg-slate-950 p-2.5">
+                      <div className="flex items-center justify-between border-b border-slate-800 pb-1 text-[9px] text-slate-400 font-bold uppercase tracking-wider">
+                        <span className="flex items-center gap-1 text-slate-300">
+                          <Icons.Clock className="h-3 w-3 text-emerald-400" />
+                          <span>Segment A: Nominal Baseline (02:10:00)</span>
+                        </span>
+                        <span className="text-slate-500">Source: k8s-node-01</span>
+                      </div>
+
+                      <div className="space-y-1 pt-1">
+                        <div className="p-1 rounded bg-slate-900/60 text-slate-300 border-l-2 border-slate-600 flex items-start space-x-1.5">
+                          <span className="text-slate-500 select-none">1</span>
+                          <span>[02:10:00] [INFO] [ingress-gateway] HTTP 200 GET /api/v1/checkout - 24ms - 100</span>
+                        </div>
+                        <div className="p-1 rounded bg-slate-900/60 text-slate-300 border-l-2 border-slate-600 flex items-start space-x-1.5">
+                          <span className="text-slate-500 select-none">2</span>
+                          <span>[02:10:05] [INFO] [{selectedIncident.appName}] Connection pool: 4/50 active connections</span>
+                        </div>
+                        <div className="p-1 rounded bg-rose-950/40 text-rose-300 border-l-2 border-rose-500/80 flex items-start space-x-1.5">
+                          <span className="text-rose-500 font-bold select-none">- 3</span>
+                          <span>[02:10:10] [INFO] [redis-cache] Cache hit ratio 98.4% (Nominal Baseline State)</span>
+                        </div>
+                        <div className="p-1 rounded bg-slate-900/60 text-slate-300 border-l-2 border-slate-600 flex items-start space-x-1.5">
+                          <span className="text-slate-500 select-none">4</span>
+                          <span>[02:10:15] [INFO] [k8s-autoscale] Replicas stable at 4 pods</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* RIGHT COLUMN: Segment B (Peak Incident Failure) */}
+                    <div className="space-y-1.5 rounded-lg border border-slate-800 bg-slate-950 p-2.5">
+                      <div className="flex items-center justify-between border-b border-slate-800 pb-1 text-[9px] text-slate-400 font-bold uppercase tracking-wider">
+                        <span className="flex items-center gap-1 text-rose-300">
+                          <Icons.AlertOctagon className="h-3 w-3 text-rose-400" />
+                          <span>Segment B: Incident Outage Peak (02:12:45)</span>
+                        </span>
+                        <span className="text-rose-400 font-bold">Source: {selectedIncident.appName}</span>
+                      </div>
+
+                      <div className="space-y-1 pt-1">
+                        <div className="p-1 rounded bg-amber-950/40 text-amber-300 border-l-2 border-amber-500 flex items-start space-x-1.5">
+                          <span className="text-amber-500 font-bold select-none">~ 1</span>
+                          <span>[02:12:45] [ERROR] [ingress-gateway] HTTP 502 Bad Gateway /api/v1/checkout - 3200ms - 502</span>
+                        </div>
+                        <div className="p-1 rounded bg-emerald-950/40 text-emerald-300 border-l-2 border-emerald-500 flex items-start space-x-1.5">
+                          <span className="text-emerald-400 font-bold select-none">+ 2</span>
+                          <span>[02:12:50] [FATAL] [{selectedIncident.appName}] Connection pool exhausted: 50/50 blocked by DB lock</span>
+                        </div>
+                        <div className="p-1 rounded bg-emerald-950/40 text-emerald-300 border-l-2 border-emerald-500 flex items-start space-x-1.5">
+                          <span className="text-emerald-400 font-bold select-none">+ 3</span>
+                          <span>[02:12:55] [FATAL] [k8s-pod-monitor] OOMKilled: Pod {selectedIncident.appName}-7f99b exited (Code 137)</span>
+                        </div>
+                        <div className="p-1 rounded bg-emerald-950/40 text-emerald-300 border-l-2 border-emerald-500 flex items-start space-x-1.5">
+                          <span className="text-emerald-400 font-bold select-none">+ 4</span>
+                          <span>[02:13:00] [WARN] [redis-cache] Memory eviction threshold exceeded: 95.2% memory capacity</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* STANDARD SINGLE LOG STREAM VIEW */
+                <div ref={logContainerRef} className="rounded-lg border border-slate-900 bg-slate-950/80 p-3 font-mono text-[10px] leading-relaxed space-y-1.5 max-h-[220px] overflow-y-auto select-text">
+                  {filteredLogs.map((line, i) => {
+                    const isErr = line.level === 'FATAL' || line.level === 'ERROR';
+                    const isWarn = line.level === 'WARN';
+                    
+                    const lowercaseMsg = line.message.toLowerCase();
+                    const containsCritical = lowercaseMsg.includes('critical') || 
+                                             lowercaseMsg.includes('fatal') || 
+                                             lowercaseMsg.includes('timeout') || 
+                                             lowercaseMsg.includes('exception') || 
+                                             isErr;
+
+                    const logLineContent = (
+                      <div className="flex items-start space-x-2 w-full">
+                        <div className="flex items-center space-x-1 shrink-0 text-slate-600 font-mono text-[9px]">
+                          <span>{line.timestamp.slice(11, 19)}</span>
+                          <span className="text-indigo-400/90 font-medium" title="Time elapsed relative to incident start">({getRelativeTimestamp(line.timestamp, selectedIncident.createdAt)})</span>
+                        </div>
+                        <span className={`shrink-0 font-bold ${
+                          isErr ? 'text-rose-500' : isWarn ? 'text-amber-500' : 'text-slate-400'
+                        }`}>
+                          [{line.level}]
+                        </span>
+                        <span className="text-slate-500 font-semibold shrink-0">[{line.source}]</span>
+                        <span className={isErr ? 'text-rose-300 font-semibold' : 'text-slate-300'}>
+                          {highlightLogMessage(line.message)}
+                        </span>
+                      </div>
+                    );
+
+                    if (containsCritical) {
+                      return (
+                        <motion.div
+                          key={i}
+                          initial={{ backgroundColor: "rgba(239, 68, 68, 0.12)", boxShadow: "0 0 10px rgba(239, 68, 68, 0.25)" }}
+                          animate={{ backgroundColor: "rgba(0, 0, 0, 0)", boxShadow: "0 0 0px rgba(0,0,0,0)" }}
+                          transition={{ duration: 2.5, ease: "easeOut" }}
+                          className="rounded px-1.5 py-0.5 border border-rose-500/10"
+                        >
+                          {logLineContent}
+                        </motion.div>
+                      );
+                    }
+
+                    return (
+                      <div key={i} className="px-1.5 py-0.5">
+                        {logLineContent}
+                      </div>
+                    );
+                  })}
+                  {filteredLogs.length === 0 && (
+                    <div className="text-center py-4 text-slate-500">No telemetry log traces matched your search query.</div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -3519,13 +4244,7 @@ Generated by SupportPilot AI Platform.
           {/* TAB 6: TOPOLOGY RELATIONSHIP DEPENDENCY GRAPH */}
           {telemetryTab === 'topology' && (
             <div className="space-y-3.5">
-              <div className="flex items-center justify-between text-xxs font-mono text-slate-500 border-b border-slate-800/50 pb-2">
-                <span>Infrastructure Service Relationship Dependency Map</span>
-                <span className="text-indigo-400 font-bold flex items-center space-x-1 animate-pulse">
-                  <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
-                  <span>Interactive Physics Canvas</span>
-                </span>
-              </div>
+              <IncidentD3Map incident={selectedIncident} />
               <IncidentDependencyGraph selectedIncident={selectedIncident} />
             </div>
           )}
@@ -3533,11 +4252,14 @@ Generated by SupportPilot AI Platform.
           {/* TAB 7: CHRONOLOGICAL INVESTIGATION TIMELINE */}
           {telemetryTab === 'timeline' && (
             <div className="space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-800/50 pb-3">
+              {/* VERTICAL INCIDENT LIFECYCLE TIMELINE COMPONENT */}
+              <IncidentLifecycleTimeline incident={selectedIncident} />
+
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-800/50 pb-3 pt-2">
                 <div>
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-1.5">
                     <Icons.History className="h-4 w-4 text-indigo-400" />
-                    <span>Comprehensive Investigation Chronology</span>
+                    <span>Comprehensive Investigation Log Stream Chronology</span>
                   </h3>
                   <p className="text-[10px] text-slate-500 font-mono mt-0.5">Chronologically ordered milestones, diagnostic notes, and log anomalies</p>
                 </div>
@@ -3652,7 +4374,12 @@ Generated by SupportPilot AI Platform.
             </div>
           )}
 
-          {/* TAB 8: STATUS HISTORY TIMELINE */}
+          {/* TAB 8: MULTI-USER SUPPORT TEAM STICKY NOTES */}
+          {telemetryTab === 'sticky_notes' && (
+            <IncidentStickyNotes incidentId={selectedIncident.id} />
+          )}
+
+          {/* TAB 9: STATUS HISTORY TIMELINE */}
           {telemetryTab === 'status_history' && (
             <div className="space-y-4">
               <div className="flex items-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-800/50 pb-3">
@@ -4210,6 +4937,20 @@ Generated by SupportPilot AI Platform.
                     <Icons.ChevronDown className="h-3.5 w-3.5" />
                   </div>
                 </div>
+              </div>
+
+              {/* Voice-To-Text Input Control */}
+              <div className="mb-2.5">
+                <VoiceTextInputWidget
+                  onTranscript={(text) => setResponseDraft(prev => (prev ? prev + ' ' + text : text))}
+                  onCommand={(cmd, val) => {
+                    if (cmd === 'SET_STATUS' && val) {
+                      setIncidents(prev => prev.map(inc => inc.id === selectedIncident.id ? { ...inc, status: val as any } : inc));
+                      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Voice command: Incident status set to ${val}` } }));
+                    }
+                  }}
+                  placeholder="Dictate notes or response..."
+                />
               </div>
               
               <div className="relative">
@@ -4996,6 +5737,13 @@ Generated by SupportPilot AI Platform.
           </>
         )}
       </AnimatePresence>
+
+      {/* Floating Voice Command History Drawer */}
+      <VoiceCommandHistoryPanel onReplayCommand={(cmdName, param) => {
+        if (cmdName === 'SET_STATUS' && param) {
+          setIncidents(prev => prev.map(inc => inc.id === selectedIncident.id ? { ...inc, status: param as any } : inc));
+        }
+      }} />
 
     </div>
     </div>

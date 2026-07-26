@@ -8,9 +8,18 @@ interface SettingsConsoleProps {
   onSetModelSelection: (model: string) => void;
   theme: string;
   onSetTheme: (theme: string) => void;
+  searchSoundEnabled?: boolean;
+  onSetSearchSoundEnabled?: (enabled: boolean) => void;
 }
 
-export default function SettingsConsole({ modelSelection, onSetModelSelection, theme, onSetTheme }: SettingsConsoleProps) {
+export default function SettingsConsole({
+  modelSelection,
+  onSetModelSelection,
+  theme,
+  onSetTheme,
+  searchSoundEnabled = true,
+  onSetSearchSoundEnabled
+}: SettingsConsoleProps) {
   const user = ActiveUser;
   const { uiDensity, setUiDensity } = useSupportPilot();
 
@@ -186,6 +195,45 @@ export default function SettingsConsole({ modelSelection, onSetModelSelection, t
             >
               <div className="h-3 w-3 rounded-full bg-black border border-white" />
               <span className="text-xxs">High Contrast</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Search Audio Sound Effects Settings */}
+        <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
+          <h3 className="mb-2.5 font-display font-bold text-xs text-indigo-400 uppercase tracking-wider flex items-center space-x-1.5 border-b border-slate-800 pb-2">
+            <Icons.Volume2 className="h-4 w-4 text-indigo-400" />
+            <span>Search UI Sound Effects</span>
+          </h3>
+          <p className="text-xxs text-slate-400 mb-3.5 leading-relaxed">
+            Toggle subtle audio feedback pings when search index results load in the search bar dropdown.
+          </p>
+
+          <div className="flex items-center justify-between rounded-lg bg-slate-950/60 p-3 border border-slate-800">
+            <div className="flex items-center space-x-2.5">
+              {searchSoundEnabled ? (
+                <Icons.Volume2 className="h-4 w-4 text-emerald-400" />
+              ) : (
+                <Icons.VolumeX className="h-4 w-4 text-slate-500" />
+              )}
+              <div>
+                <div className="text-xxs font-bold text-white">Search Index Load Sound Ping</div>
+                <div className="text-[9.5px] text-slate-400 font-mono">
+                  {searchSoundEnabled ? 'Audio ping active on search result loads' : 'Search UI sounds muted'}
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => onSetSearchSoundEnabled?.(!searchSoundEnabled)}
+              className={`px-3 py-1.5 rounded-lg text-xxs font-bold font-mono border transition-all cursor-pointer ${
+                searchSoundEnabled
+                  ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/30'
+                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
+              }`}
+            >
+              {searchSoundEnabled ? 'ENABLED' : 'MUTED'}
             </button>
           </div>
         </div>
