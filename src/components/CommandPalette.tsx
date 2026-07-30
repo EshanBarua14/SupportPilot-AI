@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { motion } from 'motion/react';
 import { CommandList } from '../data/simulation';
-import { Search, Terminal, Zap, Shield, HelpCircle, X, FileText, Activity, ArrowRight, Loader2 } from 'lucide-react';
+import { Search, Terminal, Zap, Shield, HelpCircle, X, FileText, Activity, ArrowRight, Loader2, Mic, MicOff } from 'lucide-react';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -27,7 +28,85 @@ export default function CommandPalette({ isOpen, onClose, onExecuteCommand, onNa
     auditLogs: SearchResultItem[];
   }>({ incidents: [], runbooks: [], auditLogs: [] });
 
+  // Voice Microphone API State
+  const [isListening, setIsListening] = useState(false);
+  const [micTranscript, setMicTranscript] = useState('');
+  const [speechError, setSpeechError] = useState<string | null>(null);
+  const recognitionRef = useRef<any>(null);
+
   const paletteRef = useRef<HTMLDivElement>(null);
+
+  // Initialize Speech Recognition when listening is toggled
+  const toggleListening = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    
+    if (!SpeechRecognition) {
+      setSpeechError("Speech recognition is not supported in this browser.");
+      setTimeout(() => setSpeechError(null), 3000);
+      return;
+    }
+
+    if (isListening) {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (e) {}
+      }
+      setIsListening(false);
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        setSpeechError(null);
+      };
+
+      recognition.onresult = (event: any) => {
+        let currentTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          currentTranscript += event.results[i][0].transcript;
+        }
+        if (currentTranscript) {
+          setSearch(currentTranscript);
+          setMicTranscript(currentTranscript);
+          setSelectedIndex(0);
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        console.warn('Speech Recognition error in Command Palette:', event.error);
+        if (event.error !== 'no-speech') {
+          setSpeechError(`Voice input: ${event.error}`);
+        }
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.error('Error starting Speech Recognition:', err);
+      setSpeechError("Microphone permission denied or unavailable.");
+      setIsListening(false);
+    }
+  };
+
+  // Cleanup speech recognition on unmount or close
+  useEffect(() => {
+    if (!isOpen && isListening) {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (e) {}
+      }
+      setIsListening(false);
+    }
+  }, [isOpen, isListening]);
 
   // Close command palette on escape or shortcut press
   useEffect(() => {
@@ -167,12 +246,12 @@ export default function CommandPalette({ isOpen, onClose, onExecuteCommand, onNa
         className="w-full max-w-2xl overflow-hidden rounded-xl border border-slate-800 bg-slate-900/95 shadow-2xl glow-indigo"
       >
         {/* Header Search Field */}
-        <div className="flex items-center border-b border-slate-800 px-4 py-3">
-          <Search className="mr-3 h-5 w-5 text-slate-400" />
+        <div className="flex items-center border-b border-slate-800 px-4 py-3 gap-2">
+          <Search className="h-5 w-5 text-slate-400 shrink-0" />
           <input
             autoFocus
             type="text"
-            placeholder="Search panels, incidents, runbooks, audits... (e.g., k8s)"
+            placeholder={isListening ? "Listening to voice input... speak command" : "Search panels, incidents, runbooks, audits... (e.g., k8s)"}
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
@@ -180,14 +259,64 @@ export default function CommandPalette({ isOpen, onClose, onExecuteCommand, onNa
             }}
             className="flex-1 bg-transparent py-1 font-sans text-sm text-white placeholder-slate-500 outline-none"
           />
-          {isSearching && <Loader2 className="h-4 w-4 text-indigo-400 animate-spin mr-2" />}
+          {isSearching && <Loader2 className="h-4 w-4 text-indigo-400 animate-spin shrink-0" />}
+
+          {/* Browser Microphone API Integration Button */}
+          <button
+            type="button"
+            onClick={toggleListening}
+            className={`flex items-center space-x-1.5 rounded-lg px-2.5 py-1.5 text-xs font-mono font-semibold transition-all cursor-pointer ${
+              isListening
+                ? 'bg-rose-500/20 text-rose-400 border border-rose-500/50 animate-pulse shadow-md shadow-rose-500/20'
+                : 'bg-slate-800/80 text-slate-300 hover:bg-indigo-600/20 hover:text-indigo-300 border border-slate-700'
+            }`}
+            title={isListening ? "Stop voice listening" : "Trigger commands via browser Microphone Voice Input"}
+          >
+            {isListening ? (
+              <>
+                <Mic className="h-3.5 w-3.5 text-rose-400 animate-bounce" />
+                <span className="text-[10px] uppercase font-bold tracking-wider">Listening</span>
+              </>
+            ) : (
+              <>
+                <Mic className="h-3.5 w-3.5 text-indigo-400" />
+                <span className="text-[10px] hidden sm:inline">Voice</span>
+              </>
+            )}
+          </button>
+
           <button 
             onClick={onClose}
-            className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+            className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white shrink-0"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
+
+        {/* Voice Input Banner Alerts */}
+        {isListening && (
+          <div className="bg-rose-950/40 border-b border-rose-500/30 px-4 py-1.5 flex items-center justify-between text-xxs font-mono text-rose-300">
+            <div className="flex items-center space-x-2">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+              </span>
+              <span>Microphone Active: Speak your search query or command...</span>
+            </div>
+            {micTranscript && (
+              <span className="text-slate-400 truncate max-w-[200px]">
+                "{micTranscript}"
+              </span>
+            )}
+          </div>
+        )}
+
+        {speechError && (
+          <div className="bg-amber-950/40 border-b border-amber-500/30 px-4 py-1.5 text-xxs font-mono text-amber-300 flex items-center space-x-2">
+            <MicOff className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+            <span>{speechError}</span>
+          </div>
+        )}
 
         {/* Dynamic List */}
         <div className="max-h-96 overflow-y-auto p-2 font-sans text-xs">
@@ -223,12 +352,15 @@ export default function CommandPalette({ isOpen, onClose, onExecuteCommand, onNa
           {backendResults.incidents.length > 0 && (
             <div className="mb-2.5">
               <div className="px-3 py-1 font-display font-medium text-rose-400 tracking-wider text-[10px]">MATCHED OPERATIONAL INCIDENTS</div>
-              {backendResults.incidents.map((item) => {
+              {backendResults.incidents.map((item, idx) => {
                 const globalIndex = allItems.findIndex(x => x.flatType === 'INCIDENT' && x.id === item.id);
                 const isSelected = globalIndex === selectedIndex;
                 return (
-                  <div
+                  <motion.div
                     key={item.id}
+                    initial={{ opacity: 0, scale: 0.94, y: 4 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    transition={{ duration: 0.18, delay: idx * 0.04, ease: [0.16, 1, 0.3, 1] }}
                     onClick={() => handleSelectItemIndex(globalIndex)}
                     className={`flex cursor-pointer items-center rounded-lg px-3 py-2 transition-colors ${
                       isSelected ? 'bg-rose-500/20 text-white font-semibold border-l-2 border-rose-500' : 'text-slate-300 hover:bg-slate-800/50'
@@ -240,7 +372,7 @@ export default function CommandPalette({ isOpen, onClose, onExecuteCommand, onNa
                       <div className="text-slate-400 text-[10px] mt-0.5 truncate">{item.subtitle}</div>
                     </div>
                     <ArrowRight className="h-3 w-3 text-rose-400 ml-2" />
-                  </div>
+                  </motion.div>
                 );
               })}
             </div>

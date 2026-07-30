@@ -20,7 +20,7 @@ interface SummaryData {
 
 export const IncidentSummaryWidget: React.FC<IncidentSummaryWidgetProps> = ({
   incident,
-  modelSelection = 'gemini-3.5-flash',
+  modelSelection = 'gemini-3.6-flash',
   onAppendNote
 }) => {
   const [loading, setLoading] = useState<boolean>(false);

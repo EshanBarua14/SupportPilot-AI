@@ -62,7 +62,7 @@ export default function SettingsConsole({
   }, []);
 
   const models = [
-    { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash", desc: "Optimal speed, high-fidelity L1/L2 triage, and rapid distributed trace searches." },
+    { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash", desc: "Optimal speed, high-fidelity L1/L2 triage, and rapid distributed trace searches." },
     { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview", desc: "Advanced logic, complex PostgreSQL deadlock reasoning, and L3 postmortem synthesis." }
   ];
 

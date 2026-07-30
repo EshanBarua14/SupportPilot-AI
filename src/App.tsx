@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import CommandPalette from './components/CommandPalette';
 import AgentOrchestrator from './components/AgentOrchestrator';
@@ -12,7 +12,8 @@ import ShortcutsModal from './components/ShortcutsModal';
 import SystemHealthPanel from './components/SystemHealthPanel';
 import SignalRClientManager from './components/SignalRClientManager';
 import NotificationBell from './components/NotificationBell';
-import { ActiveUser } from './data/simulation';
+import AuthConsoleModal from './components/AuthConsoleModal';
+import { ActiveUser, InitialKBArticles } from './data/simulation';
 import * as Icons from 'lucide-react';
 import { SupportPilotProvider, useSupportPilot } from './context/SupportPilotContext';
 import { useSearchMetrics } from './hooks/useSearchMetrics';
@@ -97,9 +98,15 @@ function AppContent() {
     isSystemFrozen,
     setIsSystemFrozen,
     uiDensity,
+    currentUser,
+    isAuthModalOpen,
+    setIsAuthModalOpen,
+    handleLogout,
+    handleLoginSuccess,
   } = useSupportPilot();
 
   const [isFreezeModalOpen, setIsFreezeModalOpen] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
 
   // Search usage metrics hook
   const { metrics: searchMetrics, trackQuery, trackClick, resetMetrics } = useSearchMetrics();
@@ -203,6 +210,46 @@ function AppContent() {
     isArchived?: boolean;
     onClick: () => void;
   } | null>(null);
+
+  // AI-Rank toggle state
+  const [aiRankEnabled, setAiRankEnabled] = useState<boolean>(false);
+
+  // My Incidents Filter state
+  const [myIncidentsOnly, setMyIncidentsOnly] = useState<boolean>(false);
+
+  // Incident Timeline Expanded state
+  const [timelineExpandedIds, setTimelineExpandedIds] = useState<string[]>([]);
+  const toggleIncidentTimeline = (id: string) => {
+    setTimelineExpandedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  };
+
+  // Custom Status and Assignee Pod overrides for bulk incident operations
+  const [customIncidentStatus, setCustomIncidentStatus] = useState<Record<string, string>>({});
+  const [customIncidentAssignee, setCustomIncidentAssignee] = useState<Record<string, string>>({});
+
+  const handleAssignIncidentGroup = useCallback((incId: string, incTitle: string, newGroup: string) => {
+    if (!newGroup) return;
+    const prevGroup = customIncidentAssignee[incId] || 'Unassigned / Default Pod';
+    setCustomIncidentAssignee(prev => ({ ...prev, [incId]: newGroup }));
+
+    // Record in Audit Trail via handleAddAuditLog
+    handleAddAuditLog(
+      ActiveUser.name,
+      'REASSIGN_INCIDENT_GROUP',
+      'Incident Management',
+      'SUCCESS',
+      `Reassigned incident ${incId} ("${incTitle}") to engineering pod "${newGroup}". (Previous Pod: "${prevGroup}")`
+    );
+
+    setToastMessage(`Reassigned ${incId} to "${newGroup}" & logged to audit trail.`);
+  }, [customIncidentAssignee, handleAddAuditLog, setToastMessage]);
+
+  // AI-Summary state dictionary and active summary tooltip ID
+  const [aiSummaries, setAiSummaries] = useState<Record<string, { summary: string; blocker: string; loading: boolean }>>({});
+  const [activeSummaryTooltipId, setActiveSummaryTooltipId] = useState<string | null>(null);
+
+  // Search Results Preview Sidebar tab ('preview' | 'related_runbooks')
+  const [previewSidebarTab, setPreviewSidebarTab] = useState<'preview' | 'related_runbooks'>('preview');
 
   // Recent searches state with localStorage persistence
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
@@ -455,6 +502,26 @@ function AppContent() {
     return list.filter(a => a.action.toLowerCase().includes(q) || a.payload.toLowerCase().includes(q) || a.id.toLowerCase().includes(q));
   }, [includeArchivedLogs, searchQuery]);
 
+  // Helper to compute AI Risk Priority Score (0 - 100)
+  const getAiRiskScore = useCallback((inc: any) => {
+    let score = 25;
+    const sev = (inc.severity || '').toUpperCase();
+    if (sev === 'CRITICAL' || sev === 'SEV-1') score += 45;
+    else if (sev === 'HIGH' || sev === 'SEV-2') score += 30;
+    else if (sev === 'MEDIUM' || sev === 'SEV-3') score += 15;
+
+    const currentStatus = customIncidentStatus[inc.id] || inc.status || '';
+    const st = currentStatus.toUpperCase();
+    if (st === 'INVESTIGATING' || st === 'OPEN' || st === 'ACTIVE') score += 20;
+    else if (st === 'ACKNOWLEDGED') score += 15;
+    else if (st === 'MITIGATING') score += 10;
+
+    const currentAssignee = customIncidentAssignee[inc.id] || inc.assignee;
+    if (!currentAssignee || currentAssignee === 'Unassigned') score += 10;
+
+    return Math.min(99, score);
+  }, [customIncidentStatus, customIncidentAssignee]);
+
   // Category-filtered search results lists (including archived if toggled)
   const filteredIncidents = useMemo(() => {
     const base = (searchCategoryFilter === 'All' || searchCategoryFilter === 'Incidents') ? searchResults.incidents : [];
@@ -462,8 +529,21 @@ function AppContent() {
     if (searchSeverityFilter !== 'all') {
       list = list.filter(inc => inc.severity === searchSeverityFilter);
     }
+    if (myIncidentsOnly) {
+      list = list.filter(inc => {
+        const assigned = customIncidentAssignee[inc.id] || inc.assignee || '';
+        return (
+          assigned.toLowerCase().includes(ActiveUser.name.toLowerCase()) ||
+          assigned.toLowerCase().includes('eshan') ||
+          assigned.toLowerCase().includes(ActiveUser.email.toLowerCase())
+        );
+      });
+    }
+    if (aiRankEnabled) {
+      list = [...list].sort((a, b) => getAiRiskScore(b) - getAiRiskScore(a));
+    }
     return list;
-  }, [searchCategoryFilter, searchResults.incidents, archivedIncidents, searchSeverityFilter]);
+  }, [searchCategoryFilter, searchResults.incidents, archivedIncidents, searchSeverityFilter, myIncidentsOnly, customIncidentAssignee, aiRankEnabled, getAiRiskScore]);
 
   const filteredRunbooks = (searchCategoryFilter === 'All' || searchCategoryFilter === 'Runbooks') ? searchResults.runbooks : [];
 
@@ -491,6 +571,161 @@ function AppContent() {
     );
   };
 
+  // Helper to determine horizontal stage progress for incidents in search results
+  const getIncidentProgressStage = (inc: { status?: string; severity?: string; id?: string; [key: string]: any }) => {
+    const activeStatus = (inc.id && customIncidentStatus[inc.id]) ? customIncidentStatus[inc.id] : (inc.status || '');
+    const statusUpper = activeStatus.toUpperCase();
+    if (statusUpper === 'SOLVED' || statusUpper === 'RESOLVED' || statusUpper === 'CLOSED') {
+      return { currentStage: 'Resolved' as const, stageIndex: 3, progressPercent: 100, color: 'bg-emerald-500', textColor: 'text-emerald-400' };
+    }
+    if (statusUpper === 'MITIGATING' || statusUpper === 'MITIGATED') {
+      return { currentStage: 'Mitigating' as const, stageIndex: 2, progressPercent: 75, color: 'bg-cyan-500', textColor: 'text-cyan-300' };
+    }
+    if (statusUpper === 'INVESTIGATING' || statusUpper === 'IN_PROGRESS' || statusUpper === 'ACTIVE' || statusUpper === 'OPEN') {
+      return { currentStage: 'Investigating' as const, stageIndex: 1, progressPercent: 50, color: 'bg-indigo-500', textColor: 'text-indigo-300' };
+    }
+    if (statusUpper === 'ACKNOWLEDGED') {
+      return { currentStage: 'Acknowledged' as const, stageIndex: 0, progressPercent: 25, color: 'bg-amber-500', textColor: 'text-amber-300' };
+    }
+    // Heuristic fallback mapping based on incident ID hash if explicit status is unpopulated
+    const hash = (inc.id || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const mod = hash % 4;
+    const stages = [
+      { currentStage: 'Acknowledged' as const, stageIndex: 0, progressPercent: 25, color: 'bg-amber-500', textColor: 'text-amber-300' },
+      { currentStage: 'Investigating' as const, stageIndex: 1, progressPercent: 50, color: 'bg-indigo-500', textColor: 'text-indigo-300' },
+      { currentStage: 'Mitigating' as const, stageIndex: 2, progressPercent: 75, color: 'bg-cyan-500', textColor: 'text-cyan-300' },
+      { currentStage: 'Resolved' as const, stageIndex: 3, progressPercent: 100, color: 'bg-emerald-500', textColor: 'text-emerald-400' }
+    ];
+    return stages[mod] || stages[0];
+  };
+
+  // Bulk Change Status handler
+  const handleBulkChangeStatus = (newStatus: string) => {
+    if (selectedIncidentIds.length === 0) return;
+    const count = selectedIncidentIds.length;
+    setCustomIncidentStatus(prev => {
+      const next = { ...prev };
+      selectedIncidentIds.forEach(id => { next[id] = newStatus; });
+      return next;
+    });
+    handleAddAuditLog(
+      'SystemOperator',
+      'BULK_STATUS_CHANGE',
+      'INCIDENT_SEARCH',
+      'SUCCESS',
+      `Bulk transitioned ${count} incident(s) [IDs: ${selectedIncidentIds.join(', ')}] status to "${newStatus}".`
+    );
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `Updated status of ${count} incident(s) to "${newStatus}"` }
+    }));
+    setToastMessage(`Bulk transitioned ${count} incident(s) status to ${newStatus}. Action logged.`);
+    setSelectedIncidentIds([]);
+  };
+
+  // Assign to Group handler
+  const handleBulkAssignGroup = (groupPodName: string) => {
+    if (selectedIncidentIds.length === 0) return;
+    const count = selectedIncidentIds.length;
+    setCustomIncidentAssignee(prev => {
+      const next = { ...prev };
+      selectedIncidentIds.forEach(id => { next[id] = groupPodName; });
+      return next;
+    });
+    handleAddAuditLog(
+      'SystemOperator',
+      'BULK_ASSIGN_GROUP',
+      'INCIDENT_SEARCH',
+      'SUCCESS',
+      `Assigned ${count} incident(s) [IDs: ${selectedIncidentIds.join(', ')}] to engineering pod "${groupPodName}".`
+    );
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `Assigned ${count} incident(s) to ${groupPodName}` }
+    }));
+    setToastMessage(`Assigned ${count} incident(s) to ${groupPodName}. Action logged.`);
+    setSelectedIncidentIds([]);
+  };
+
+  // Fetch AI Incident Summary (2-sentence progress & blocker summary via Gemini API)
+  const fetchAiSummaryForIncident = (inc: any, forceRefresh: boolean = false) => {
+    if (activeSummaryTooltipId === inc.id && !forceRefresh) {
+      setActiveSummaryTooltipId(null);
+      return;
+    }
+    setActiveSummaryTooltipId(inc.id);
+
+    if (aiSummaries[inc.id] && !aiSummaries[inc.id].loading && aiSummaries[inc.id].summary && !forceRefresh) {
+      return;
+    }
+
+    setAiSummaries(prev => ({
+      ...prev,
+      [inc.id]: { summary: '', blocker: '', loading: true }
+    }));
+
+    fetch('/api/incident-summary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ incident: inc })
+    })
+      .then(res => res.json())
+      .then(data => {
+        const sumText = data.summary || `Active triage in progress for ${inc.title}. Telemetry logs indicate elevated error metrics in ${inc.appName || 'the primary service'}.`;
+        const blockerText = (data.nextSteps && data.nextSteps[0])
+          ? `Current Blocker: ${data.nextSteps[0]}`
+          : `Current Blocker: Investigating underlying database row locks and connection pool exhaustion.`;
+
+        setAiSummaries(prev => ({
+          ...prev,
+          [inc.id]: { summary: sumText, blocker: blockerText, loading: false }
+        }));
+      })
+      .catch(() => {
+        setAiSummaries(prev => ({
+          ...prev,
+          [inc.id]: {
+            summary: `Incident ${inc.id} (${inc.title}) is undergoing active telemetry investigation.`,
+            blocker: `Current Blocker: On-call engineer reviewing thread pool locks and gateway timeouts.`,
+            loading: false
+          }
+        }));
+      });
+  };
+
+  // Related Runbooks for currently hovered or selected incident
+  const relatedRunbooksForFocused = useMemo(() => {
+    let targetTitle = '';
+    let targetSub = '';
+    if (hoveredPreviewItem && hoveredPreviewItem.type === 'incident') {
+      targetTitle = hoveredPreviewItem.title || '';
+      targetSub = hoveredPreviewItem.subtitle || '';
+    } else if (filteredIncidents.length > 0) {
+      targetTitle = filteredIncidents[0].title || '';
+      targetSub = filteredIncidents[0].description || '';
+    }
+
+    if (!targetTitle && !targetSub) {
+      return InitialKBArticles.map(kb => ({ ...kb, matchScore: 78 }));
+    }
+
+    const combined = `${targetTitle} ${targetSub}`.toLowerCase();
+    const words = Array.from(new Set(combined.split(/[^a-zA-Z0-9]/).filter(w => w.length > 3)));
+
+    const scored = InitialKBArticles.map(kb => {
+      const kbText = `${kb.title} ${kb.content} ${(kb.tags || []).join(' ')}`.toLowerCase();
+      let matches = 0;
+      words.forEach(w => {
+        if (kbText.includes(w)) matches++;
+      });
+      const matchScore = words.length > 0
+        ? Math.min(98, Math.max(62, Math.round((matches / words.length) * 100) + 55))
+        : 78;
+      return { ...kb, matchScore, matchesCount: matches };
+    });
+
+    scored.sort((a, b) => b.matchScore - a.matchScore);
+    return scored;
+  }, [hoveredPreviewItem, filteredIncidents]);
+
   const handleBulkAssignIncidents = () => {
     if (selectedIncidentIds.length === 0) return;
     const count = selectedIncidentIds.length;
@@ -517,6 +752,56 @@ function AppContent() {
     );
     setToastMessage(`Bulk archived ${count} incident(s) to cold storage vault.`);
     setSelectedIncidentIds([]);
+  };
+
+  const handleQuickReplyBatchAck = () => {
+    if (selectedIncidentIds.length === 0) return;
+    const count = selectedIncidentIds.length;
+    const standardAckText = "Standard Acknowledgment: We have identified and acknowledged this incident. On-call engineering team is actively investigating root cause and telemetry metrics.";
+    
+    handleAddAuditLog(
+      'SystemOperator',
+      'QUICK_REPLY_BATCH_ACK',
+      'INCIDENT_SEARCH',
+      'SUCCESS',
+      `Dispatched Standard Acknowledgment Quick Reply to ${count} incident(s) [IDs: ${selectedIncidentIds.join(', ')}]: "${standardAckText}"`
+    );
+
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `Dispatched Quick Reply (Standard Ack) to ${count} selected incident(s)` }
+    }));
+
+    setToastMessage(`Quick Reply (Standard Acknowledgment) sent to ${count} incident(s). Action logged.`);
+    setSelectedIncidentIds([]);
+  };
+
+  const handleNotifyOnCallEngineer = (inc: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const engineer = inc.assignee || 'Senior On-Call Engineer (Eshan Barua)';
+    
+    handleAddAuditLog(
+      'SystemOperator',
+      'NOTIFY_ON_CALL_ENGINEER',
+      'INCIDENT_SEARCH',
+      'SUCCESS',
+      `Triggered push & email notification summary to on-call engineer (${engineer}) for incident ${inc.id} (${inc.title}).`
+    );
+
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(`[SupportPilot NOC] Incident Alert: ${inc.id}`, {
+          body: `Severity: ${inc.severity}\nTitle: ${inc.title}\nAssigned: ${engineer}`,
+        });
+      } catch (err) {
+        console.warn('Push notification error:', err);
+      }
+    }
+
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `🔔 Push notification & email summary sent to ${engineer} for ${inc.id}!` }
+    }));
+
+    setToastMessage(`🔔 Dispatched push & email summary for ${inc.id} to ${engineer}.`);
   };
 
   // Simulated AI context-aware Related Queries
@@ -966,8 +1251,8 @@ function AppContent() {
                   animate={{ opacity: 1 }}
                   className="text-left min-w-0 overflow-hidden"
                 >
-                  <div className="font-bold text-white text-xxs truncate">{ActiveUser.name}</div>
-                  <div className="text-[9px] font-mono text-indigo-400 truncate">{ActiveUser.role}</div>
+                  <div className="font-bold text-white text-xxs truncate">{currentUser.name}</div>
+                  <div className="text-[9px] font-mono text-indigo-400 truncate">{currentUser.role}</div>
                 </motion.div>
               )}
             </div>
@@ -1237,6 +1522,40 @@ function AppContent() {
                             )}
                           </div>
 
+                          {/* AI-Rank (Risk Priority) Toggle */}
+                          <button
+                            type="button"
+                            id="btn-ai-rank-toggle"
+                            onClick={() => setAiRankEnabled(!aiRankEnabled)}
+                            className={`px-2 py-1 rounded text-[8px] font-mono font-bold flex items-center space-x-1 cursor-pointer transition-all border ${
+                              aiRankEnabled
+                                ? 'bg-gradient-to-r from-amber-600 via-rose-600 to-purple-600 text-white border-amber-400 shadow-md shadow-amber-500/20'
+                                : 'bg-slate-900/90 text-slate-400 hover:text-slate-200 border-slate-800'
+                            }`}
+                            title="Toggle AI Risk Priority Ranking: Reorders incident tickets based on predicted resolution probability and risk severity"
+                          >
+                            <Icons.Sparkles className={`h-2.5 w-2.5 ${aiRankEnabled ? 'text-amber-200 animate-spin' : 'text-amber-400'}`} />
+                            <span>AI-Rank (Risk Priority)</span>
+                            {aiRankEnabled && <span className="bg-slate-950 text-amber-300 px-1 py-0.2 rounded text-[7px] font-black">ON</span>}
+                          </button>
+
+                          {/* My Incidents Filter Toggle */}
+                          <button
+                            type="button"
+                            id="btn-my-incidents-toggle"
+                            onClick={() => setMyIncidentsOnly(!myIncidentsOnly)}
+                            className={`px-2 py-1 rounded text-[8px] font-mono font-bold flex items-center space-x-1 cursor-pointer transition-all border ${
+                              myIncidentsOnly
+                                ? 'bg-indigo-600 text-white border-indigo-400 shadow-md shadow-indigo-500/20'
+                                : 'bg-slate-900/90 text-slate-400 hover:text-slate-200 border-slate-800'
+                            }`}
+                            title="Filter search results to show only incidents assigned to active user"
+                          >
+                            <Icons.UserCheck className={`h-2.5 w-2.5 ${myIncidentsOnly ? 'text-indigo-200' : 'text-indigo-400'}`} />
+                            <span>My Incidents</span>
+                            {myIncidentsOnly && <span className="bg-slate-950 text-indigo-300 px-1 py-0.2 rounded text-[7px] font-black">ON</span>}
+                          </button>
+
                           {/* Show Meta Toggle */}
                           <label className="flex items-center space-x-1.5 text-[8px] font-mono font-bold cursor-pointer text-slate-400 hover:text-slate-200 bg-slate-900/90 px-2 py-1 rounded border border-slate-800">
                             <input
@@ -1456,7 +1775,65 @@ function AppContent() {
                                         <span className="hidden sm:inline">Bulk Operations</span>
                                       </div>
 
-                                      <div className="flex items-center space-x-1">
+                                      <div className="flex flex-wrap items-center gap-1">
+                                        <button
+                                          type="button"
+                                          id="btn-quick-reply-batch-ack"
+                                          onClick={handleQuickReplyBatchAck}
+                                          className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition-colors cursor-pointer flex items-center space-x-1 shadow-md shadow-emerald-500/20"
+                                          title="Send pre-defined 'Standard Acknowledgment' quick reply update to selected incidents and log to audit"
+                                        >
+                                          <Icons.MessageSquareCode className="h-2.5 w-2.5 text-emerald-100" />
+                                          <span>Quick Reply (Ack)</span>
+                                        </button>
+
+                                        {/* Bulk Change Status Dropdown */}
+                                        <div className="flex items-center space-x-1 bg-amber-950/80 px-1.5 py-0.5 rounded border border-amber-700/80">
+                                          <Icons.RefreshCw className="h-2.5 w-2.5 text-amber-300 shrink-0" />
+                                          <span className="text-[7.5px] font-bold text-amber-200">Status:</span>
+                                          <select
+                                            id="select-bulk-status"
+                                            defaultValue=""
+                                            onChange={(e) => {
+                                              if (e.target.value) {
+                                                handleBulkChangeStatus(e.target.value);
+                                                e.target.value = '';
+                                              }
+                                            }}
+                                            className="bg-slate-950 text-amber-300 font-bold text-[7.5px] rounded px-1 py-0.2 border border-amber-700/60 focus:outline-none cursor-pointer"
+                                          >
+                                            <option value="" disabled>Change State...</option>
+                                            <option value="Acknowledged" className="bg-slate-950 text-amber-300">Acknowledged</option>
+                                            <option value="Investigating" className="bg-slate-950 text-indigo-300">Investigating</option>
+                                            <option value="Mitigating" className="bg-slate-950 text-cyan-300">Mitigating</option>
+                                            <option value="Resolved" className="bg-slate-950 text-emerald-300">Resolved</option>
+                                          </select>
+                                        </div>
+
+                                        {/* Assign to Group Dropdown */}
+                                        <div className="flex items-center space-x-1 bg-indigo-950/80 px-1.5 py-0.5 rounded border border-indigo-700/80">
+                                          <Icons.Users className="h-2.5 w-2.5 text-indigo-300 shrink-0" />
+                                          <span className="text-[7.5px] font-bold text-indigo-200">Group Pod:</span>
+                                          <select
+                                            id="select-bulk-group"
+                                            defaultValue=""
+                                            onChange={(e) => {
+                                              if (e.target.value) {
+                                                handleBulkAssignGroup(e.target.value);
+                                                e.target.value = '';
+                                              }
+                                            }}
+                                            className="bg-slate-950 text-indigo-200 font-bold text-[7.5px] rounded px-1 py-0.2 border border-indigo-700/60 focus:outline-none cursor-pointer"
+                                          >
+                                            <option value="" disabled>Assign Pod...</option>
+                                            <option value="Platform Core Pod" className="bg-slate-950 text-indigo-200">Platform Core Pod</option>
+                                            <option value="Database Infra Pod" className="bg-slate-950 text-indigo-200">Database Infra Pod</option>
+                                            <option value="SRE Delta Squad" className="bg-slate-950 text-indigo-200">SRE Delta Squad</option>
+                                            <option value="Security Response Team" className="bg-slate-950 text-indigo-200">Security Response Team</option>
+                                            <option value="Frontend Platform Pod" className="bg-slate-950 text-indigo-200">Frontend Platform Pod</option>
+                                          </select>
+                                        </div>
+
                                         <button
                                           type="button"
                                           onClick={handleBulkAssignIncidents}
@@ -1587,6 +1964,76 @@ function AppContent() {
                                                             </span>
                                                           </div>
                                                           <div className="flex items-center space-x-1 shrink-0">
+                                                            {/* AI Risk Score Badge */}
+                                                            {aiRankEnabled && (
+                                                              <span className="text-[7.5px] font-mono font-black px-1.5 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-500/50 flex items-center space-x-0.5">
+                                                                <Icons.Sparkles className="h-2 w-2 text-amber-400" />
+                                                                <span>Risk: {getAiRiskScore(inc)}</span>
+                                                              </span>
+                                                            )}
+
+                                                            {/* High-Risk SLA Visual Flag */}
+                                                            {((inc.slaRemainingSecs !== undefined && inc.slaRemainingSecs <= 1800) || inc.severity === 'CRITICAL') && (
+                                                              <span 
+                                                                className="inline-flex items-center space-x-1 px-1.5 py-0.2 rounded bg-amber-950/90 text-amber-300 border border-amber-500/80 text-[7.5px] font-mono font-bold animate-pulse shadow-sm shadow-amber-900/50 shrink-0"
+                                                                title="High-Risk SLA Target: Less than 30 minutes remaining on target"
+                                                              >
+                                                                <Icons.AlertTriangle className="h-2.5 w-2.5 text-amber-400 shrink-0" />
+                                                                <span>High-Risk SLA ({Math.max(5, Math.round((inc.slaRemainingSecs || 900) / 60))}m)</span>
+                                                              </span>
+                                                            )}
+
+                                                            {/* Incident Timeline Toggle Button */}
+                                                            <button
+                                                              type="button"
+                                                              id={`btn-timeline-${inc.id}`}
+                                                              onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                toggleIncidentTimeline(inc.id);
+                                                              }}
+                                                              className={`p-0.5 text-[7.5px] font-mono font-bold px-1.5 py-0.2 rounded border cursor-pointer flex items-center space-x-0.5 transition-all ${
+                                                                timelineExpandedIds.includes(inc.id)
+                                                                  ? 'bg-indigo-900 text-indigo-200 border-indigo-500 shadow-sm'
+                                                                  : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 border-slate-800'
+                                                              }`}
+                                                              title="Toggle horizontal incident timeline (state transitions & audit markers)"
+                                                            >
+                                                              <Icons.GitCommit className="h-2.5 w-2.5 text-indigo-400 shrink-0" />
+                                                              <span>Timeline</span>
+                                                            </button>
+
+                                                            {/* Assign to Group Dropdown Menu */}
+                                                            <div 
+                                                              className="relative inline-flex items-center shrink-0"
+                                                              onClick={(e) => e.stopPropagation()}
+                                                            >
+                                                              <label htmlFor={`assign-group-${inc.id}`} className="sr-only">Assign to Engineering Group</label>
+                                                              <div className="relative flex items-center">
+                                                                <Icons.Users className="absolute left-1.5 h-2.5 w-2.5 text-indigo-400 pointer-events-none z-10" />
+                                                                <select
+                                                                  id={`assign-group-${inc.id}`}
+                                                                  value={customIncidentAssignee[inc.id] || ''}
+                                                                  onChange={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleAssignIncidentGroup(inc.id, inc.title, e.target.value);
+                                                                  }}
+                                                                  className="pl-5 pr-4 py-0.2 text-[7.5px] font-mono font-bold bg-slate-950 text-indigo-200 hover:text-indigo-100 border border-indigo-700/60 hover:border-indigo-500 rounded cursor-pointer appearance-none focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
+                                                                  title="Reassign incident immediately to engineering group and record in audit log"
+                                                                >
+                                                                  <option value="" disabled className="bg-slate-900 text-slate-400">
+                                                                    {customIncidentAssignee[inc.id] ? `Pod: ${customIncidentAssignee[inc.id]}` : 'Assign Group...'}
+                                                                  </option>
+                                                                  <option value="SRE & Infrastructure Pod" className="bg-slate-900 text-slate-200">SRE & Infrastructure Pod</option>
+                                                                  <option value="Core Backend & DB Pod" className="bg-slate-900 text-slate-200">Core Backend & DB Pod</option>
+                                                                  <option value="Kubernetes Platform Pod" className="bg-slate-900 text-slate-200">Kubernetes Platform Pod</option>
+                                                                  <option value="Security & Incident Response" className="bg-slate-900 text-slate-200">Security & Incident Response</option>
+                                                                  <option value="API Gateway & Microservices" className="bg-slate-900 text-slate-200">API Gateway & Microservices</option>
+                                                                  <option value="L1 Support & Dispatch" className="bg-slate-900 text-slate-200">L1 Support & Dispatch</option>
+                                                                </select>
+                                                                <Icons.ChevronDown className="absolute right-1 h-2 w-2 text-indigo-400 pointer-events-none" />
+                                                              </div>
+                                                            </div>
+
                                                             <span className={`text-[7.5px] font-mono font-bold px-1.5 py-0.2 rounded border ${statusBadge.color}`}>
                                                               {statusBadge.label}
                                                             </span>
@@ -1626,11 +2073,166 @@ function AppContent() {
                                                             >
                                                               <Icons.Share2 className="h-2.5 w-2.5" />
                                                             </button>
+
+                                                            {/* AI Summary Tooltip Button */}
+                                                            <button
+                                                              type="button"
+                                                              id={`btn-ai-summary-${inc.id}`}
+                                                              onMouseEnter={() => fetchAiSummaryForIncident(inc)}
+                                                              onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                fetchAiSummaryForIncident(inc);
+                                                              }}
+                                                              className="p-0.5 text-purple-300 hover:text-purple-100 hover:bg-purple-900/80 rounded transition-colors flex items-center space-x-0.5 px-1 bg-purple-950/60 border border-purple-500/40 cursor-pointer shrink-0"
+                                                              title="Hover or click to fetch 2-sentence Gemini AI summary of progress and blockers"
+                                                            >
+                                                              <Icons.Bot className="h-2.5 w-2.5 text-purple-400 shrink-0" />
+                                                              <span className="text-[7.5px] font-mono font-bold text-purple-200 hidden sm:inline">AI-Summary</span>
+                                                            </button>
+
+                                                            <button
+                                                              type="button"
+                                                              id={`btn-notify-oncall-${inc.id}`}
+                                                              onClick={(e) => handleNotifyOnCallEngineer(inc, e)}
+                                                              className="p-0.5 text-slate-400 hover:text-amber-300 hover:bg-slate-800/80 rounded transition-colors flex items-center space-x-0.5 px-1 bg-amber-950/40 border border-amber-500/30 cursor-pointer shrink-0"
+                                                              title="Trigger push notification or email summary to on-call engineer"
+                                                            >
+                                                              <Icons.BellRing className="h-2.5 w-2.5 text-amber-400 shrink-0" />
+                                                              <span className="text-[7.5px] font-mono font-bold text-amber-300 hidden sm:inline">Notify</span>
+                                                            </button>
                                                           </div>
                                                         </div>
                                                         <p className="text-[9.5px] text-slate-400 line-clamp-1 leading-snug">
                                                           <HighlightMatch text={inc.description} query={searchQuery} />
                                                         </p>
+
+                                                        {/* Horizontal Progress Stage Line */}
+                                                        {(() => {
+                                                          const stageInfo = getIncidentProgressStage(inc);
+                                                          const stages = ['Acknowledged', 'Investigating', 'Mitigating', 'Resolved'] as const;
+                                                          return (
+                                                            <div className="mt-1.5 pt-1.5 border-t border-slate-800/50 space-y-1">
+                                                              <div className="flex items-center justify-between text-[7.5px] font-mono">
+                                                                <span className="text-slate-400 font-medium">Stage Progress:</span>
+                                                                <span className={`font-bold flex items-center space-x-1 ${stageInfo.textColor}`}>
+                                                                  <span className={`h-1.5 w-1.5 rounded-full ${stageInfo.color} animate-pulse`} />
+                                                                  <span>{stageInfo.currentStage}</span>
+                                                                </span>
+                                                              </div>
+
+                                                              <div className="relative w-full h-1 bg-slate-950 rounded-full overflow-hidden border border-slate-800/80">
+                                                                <div 
+                                                                  className={`h-full transition-all duration-300 ${stageInfo.color}`} 
+                                                                  style={{ width: `${stageInfo.progressPercent}%` }}
+                                                                />
+                                                              </div>
+
+                                                              <div className="grid grid-cols-4 gap-0.5 text-[7px] font-mono text-center">
+                                                                {stages.map((stg, sIdx) => {
+                                                                  const isActive = sIdx === stageInfo.stageIndex;
+                                                                  const isPassed = sIdx <= stageInfo.stageIndex;
+                                                                  return (
+                                                                    <span 
+                                                                      key={stg} 
+                                                                      className={`truncate ${
+                                                                        isActive 
+                                                                          ? 'text-amber-300 font-extrabold underline' 
+                                                                          : isPassed 
+                                                                            ? 'text-slate-300 font-bold' 
+                                                                            : 'text-slate-600'
+                                                                      }`}
+                                                                    >
+                                                                      {stg.slice(0, 3).toUpperCase()}
+                                                                    </span>
+                                                                  );
+                                                                })}
+                                                              </div>
+                                                            </div>
+                                                          );
+                                                        })()}
+
+                                                        {/* AI-Summary Callout Hover Tooltip Box */}
+                                                        {activeSummaryTooltipId === inc.id && (
+                                                          <motion.div
+                                                            initial={{ opacity: 0, y: -4 }}
+                                                            animate={{ opacity: 1, y: 0 }}
+                                                            className="mt-1.5 p-2 rounded-lg bg-purple-950/90 border border-purple-500/60 shadow-xl font-mono text-[8.5px] text-purple-100 space-y-1"
+                                                          >
+                                                            <div className="flex items-center justify-between border-b border-purple-800/60 pb-1">
+                                                              <span className="font-bold text-purple-300 flex items-center space-x-1">
+                                                                <Icons.Sparkles className="h-2.5 w-2.5 text-purple-400" />
+                                                                <span>Gemini AI Incident Progress Summary</span>
+                                                              </span>
+                                                              <div className="flex items-center space-x-1.5">
+                                                                <span className="text-[7px] text-purple-400">2-Sentence Brief</span>
+                                                                <button
+                                                                  type="button"
+                                                                  id={`btn-refresh-ai-summary-${inc.id}`}
+                                                                  onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    fetchAiSummaryForIncident(inc, true);
+                                                                  }}
+                                                                  className="flex items-center space-x-0.5 text-[7px] font-mono font-bold bg-purple-900/80 hover:bg-purple-800 text-purple-200 px-1 py-0.2 rounded border border-purple-700/60 transition-all cursor-pointer"
+                                                                  title="Force-fetch latest AI progress summary"
+                                                                >
+                                                                  <Icons.RefreshCw className={`h-2 w-2 text-purple-300 ${aiSummaries[inc.id]?.loading ? 'animate-spin' : ''}`} />
+                                                                  <span>Refresh</span>
+                                                                </button>
+                                                              </div>
+                                                            </div>
+                                                            {aiSummaries[inc.id] ? (
+                                                              <div className="space-y-1">
+                                                                <p className="leading-relaxed text-purple-200 font-sans text-[9px]">
+                                                                  {aiSummaries[inc.id].summary}
+                                                                </p>
+                                                                {aiSummaries[inc.id].blocker && (
+                                                                  <p className="text-[7.5px] text-amber-300 bg-amber-950/60 p-1 rounded border border-amber-800/50">
+                                                                    <span className="font-bold text-amber-400">Current Blocker:</span> {aiSummaries[inc.id].blocker}
+                                                                  </p>
+                                                                )}
+                                                              </div>
+                                                            ) : (
+                                                              <div className="flex items-center space-x-1.5 text-purple-300 py-1">
+                                                                <Icons.Loader2 className="h-3 w-3 animate-spin text-purple-400" />
+                                                                <span>Generating AI progress & blocker summary...</span>
+                                                              </div>
+                                                            )}
+                                                          </motion.div>
+                                                        )}
+
+                                                        {/* Incident Timeline Horizontal Drawer */}
+                                                        {timelineExpandedIds.includes(inc.id) && (
+                                                          <div className="mt-2 p-2 rounded-lg bg-slate-950/90 border border-indigo-500/40 space-y-2 font-mono text-[8px]" onClick={(e) => e.stopPropagation()}>
+                                                            <div className="flex items-center justify-between border-b border-slate-800 pb-1">
+                                                              <span className="font-bold text-indigo-300 flex items-center space-x-1">
+                                                                <Icons.GitCommit className="h-3 w-3 text-indigo-400" />
+                                                                <span>Incident State Transitions & Audit Timeline</span>
+                                                              </span>
+                                                              <span className="text-slate-500 text-[7px]">{inc.id}</span>
+                                                            </div>
+                                                            <div className="relative pt-1 pb-1 overflow-x-auto">
+                                                              <div className="flex items-center justify-between min-w-[320px] relative px-2">
+                                                                <div className="absolute top-3 left-4 right-4 h-0.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500 z-0" />
+                                                                {[
+                                                                  { title: 'Open', time: (inc.createdAt || '').slice(11, 16) || '22:15', actor: 'Watcher', icon: Icons.AlertCircle },
+                                                                  { title: 'Acknowledged', time: '22:18', actor: customIncidentAssignee[inc.id] || inc.assignee || 'Eshan Barua', icon: Icons.UserCheck },
+                                                                  { title: 'Investigating', time: '22:25', actor: 'SupportPilot AI', icon: Icons.Cpu },
+                                                                  { title: 'Mitigating', time: '22:32', actor: 'Remediation Pod', icon: Icons.Zap },
+                                                                  { title: 'Resolved', time: 'Est 22:45', actor: 'NOC Controller', icon: Icons.CheckCircle2 }
+                                                                ].map((evt, idx) => (
+                                                                  <div key={idx} className="relative z-10 flex flex-col items-center text-center space-y-0.5">
+                                                                    <div className={`p-1 rounded-full border ${idx <= 3 ? 'bg-indigo-950 border-indigo-400 text-indigo-300 ring-2 ring-indigo-500/20' : 'bg-slate-900 border-slate-700 text-slate-500'}`}>
+                                                                      <evt.icon className="h-2.5 w-2.5" />
+                                                                    </div>
+                                                                    <div className="font-bold text-slate-200 text-[7.5px]">{evt.title}</div>
+                                                                    <div className="text-[6.5px] text-slate-400 font-mono">{evt.time}</div>
+                                                                    <div className="text-[6px] text-indigo-300 bg-indigo-950/60 px-1 rounded border border-indigo-900 truncate max-w-[70px]">{evt.actor}</div>
+                                                                  </div>
+                                                                ))}
+                                                              </div>
+                                                            </div>
+                                                          </div>
+                                                        )}
 
                                                         {editingNoteItemId === itemId && (
                                                           <div className="mt-1.5 pt-1 border-t border-slate-800/80 flex items-center space-x-1" onClick={(e) => e.stopPropagation()}>
@@ -1762,6 +2364,68 @@ function AppContent() {
                                                   </span>
                                                 </div>
                                                 <div className="flex items-center space-x-1 shrink-0">
+                                                  {/* High-Risk SLA Visual Flag */}
+                                                  {((inc.slaRemainingSecs !== undefined && inc.slaRemainingSecs <= 1800) || inc.severity === 'CRITICAL') && (
+                                                    <span 
+                                                      className="inline-flex items-center space-x-1 px-1.5 py-0.2 rounded bg-amber-950/90 text-amber-300 border border-amber-500/80 text-[7.5px] font-mono font-bold animate-pulse shadow-sm shadow-amber-900/50 shrink-0"
+                                                      title="High-Risk SLA Target: Less than 30 minutes remaining on target"
+                                                    >
+                                                      <Icons.AlertTriangle className="h-2.5 w-2.5 text-amber-400 shrink-0" />
+                                                      <span>High-Risk SLA ({Math.max(5, Math.round((inc.slaRemainingSecs || 900) / 60))}m)</span>
+                                                    </span>
+                                                  )}
+
+                                                  {/* Incident Timeline Toggle Button */}
+                                                  <button
+                                                    type="button"
+                                                    id={`btn-timeline-flat-${inc.id}`}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      toggleIncidentTimeline(inc.id);
+                                                    }}
+                                                    className={`p-0.5 text-[7.5px] font-mono font-bold px-1.5 py-0.2 rounded border cursor-pointer flex items-center space-x-0.5 transition-all ${
+                                                      timelineExpandedIds.includes(inc.id)
+                                                        ? 'bg-indigo-900 text-indigo-200 border-indigo-500 shadow-sm'
+                                                        : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 border-slate-800'
+                                                    }`}
+                                                    title="Toggle horizontal incident timeline (state transitions & audit markers)"
+                                                  >
+                                                    <Icons.GitCommit className="h-2.5 w-2.5 text-indigo-400 shrink-0" />
+                                                    <span>Timeline</span>
+                                                  </button>
+
+                                                  {/* Assign to Group Dropdown Menu */}
+                                                  <div 
+                                                    className="relative inline-flex items-center shrink-0"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                  >
+                                                    <label htmlFor={`assign-group-flat-${inc.id}`} className="sr-only">Assign to Engineering Group</label>
+                                                    <div className="relative flex items-center">
+                                                      <Icons.Users className="absolute left-1.5 h-2.5 w-2.5 text-indigo-400 pointer-events-none z-10" />
+                                                      <select
+                                                        id={`assign-group-flat-${inc.id}`}
+                                                        value={customIncidentAssignee[inc.id] || ''}
+                                                        onChange={(e) => {
+                                                          e.stopPropagation();
+                                                          handleAssignIncidentGroup(inc.id, inc.title, e.target.value);
+                                                        }}
+                                                        className="pl-5 pr-4 py-0.2 text-[7.5px] font-mono font-bold bg-slate-950 text-indigo-200 hover:text-indigo-100 border border-indigo-700/60 hover:border-indigo-500 rounded cursor-pointer appearance-none focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
+                                                        title="Reassign incident immediately to engineering group and record in audit log"
+                                                      >
+                                                        <option value="" disabled className="bg-slate-900 text-slate-400">
+                                                          {customIncidentAssignee[inc.id] ? `Pod: ${customIncidentAssignee[inc.id]}` : 'Assign Group...'}
+                                                        </option>
+                                                        <option value="SRE & Infrastructure Pod" className="bg-slate-900 text-slate-200">SRE & Infrastructure Pod</option>
+                                                        <option value="Core Backend & DB Pod" className="bg-slate-900 text-slate-200">Core Backend & DB Pod</option>
+                                                        <option value="Kubernetes Platform Pod" className="bg-slate-900 text-slate-200">Kubernetes Platform Pod</option>
+                                                        <option value="Security & Incident Response" className="bg-slate-900 text-slate-200">Security & Incident Response</option>
+                                                        <option value="API Gateway & Microservices" className="bg-slate-900 text-slate-200">API Gateway & Microservices</option>
+                                                        <option value="L1 Support & Dispatch" className="bg-slate-900 text-slate-200">L1 Support & Dispatch</option>
+                                                      </select>
+                                                      <Icons.ChevronDown className="absolute right-1 h-2 w-2 text-indigo-400 pointer-events-none" />
+                                                    </div>
+                                                  </div>
+
                                                   <span className={`text-[7.5px] font-mono font-bold px-1.5 py-0.2 rounded border ${statusBadge.color}`}>
                                                     {statusBadge.label}
                                                   </span>
@@ -1801,11 +2465,165 @@ function AppContent() {
                                                   >
                                                     <Icons.Share2 className="h-2.5 w-2.5" />
                                                   </button>
+
+                                                  <button
+                                                    type="button"
+                                                    id={`btn-ai-summary-${inc.id}`}
+                                                    onMouseEnter={() => fetchAiSummaryForIncident(inc)}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      fetchAiSummaryForIncident(inc);
+                                                    }}
+                                                    className="p-0.5 text-purple-300 hover:text-purple-100 hover:bg-purple-900/80 rounded transition-colors flex items-center space-x-0.5 px-1 bg-purple-950/60 border border-purple-500/40 cursor-pointer shrink-0"
+                                                    title="Hover or click to fetch 2-sentence Gemini AI summary of progress and blockers"
+                                                  >
+                                                    <Icons.Bot className="h-2.5 w-2.5 text-purple-400 shrink-0" />
+                                                    <span className="text-[7.5px] font-mono font-bold text-purple-200 hidden sm:inline">AI-Summary</span>
+                                                  </button>
+
+                                                  <button
+                                                    type="button"
+                                                    id={`btn-notify-oncall-${inc.id}`}
+                                                    onClick={(e) => handleNotifyOnCallEngineer(inc, e)}
+                                                    className="p-0.5 text-slate-400 hover:text-amber-300 hover:bg-slate-800/80 rounded transition-colors flex items-center space-x-0.5 px-1 bg-amber-950/40 border border-amber-500/30 cursor-pointer shrink-0"
+                                                    title="Trigger push notification or email summary to on-call engineer"
+                                                  >
+                                                    <Icons.BellRing className="h-2.5 w-2.5 text-amber-400 shrink-0" />
+                                                    <span className="text-[7.5px] font-mono font-bold text-amber-300 hidden sm:inline">Notify</span>
+                                                  </button>
                                                 </div>
                                               </div>
                                               <p className="text-[9.5px] text-slate-400 line-clamp-1 leading-snug">
                                                 <HighlightMatch text={inc.description} query={searchQuery} />
                                               </p>
+
+                                              {/* Horizontal Progress Stage Line */}
+                                              {(() => {
+                                                const stageInfo = getIncidentProgressStage(inc);
+                                                const stages = ['Acknowledged', 'Investigating', 'Mitigating', 'Resolved'] as const;
+                                                return (
+                                                  <div className="mt-1.5 pt-1.5 border-t border-slate-800/50 space-y-1">
+                                                    <div className="flex items-center justify-between text-[7.5px] font-mono">
+                                                      <span className="text-slate-400 font-medium">Stage Progress:</span>
+                                                      <span className={`font-bold flex items-center space-x-1 ${stageInfo.textColor}`}>
+                                                        <span className={`h-1.5 w-1.5 rounded-full ${stageInfo.color} animate-pulse`} />
+                                                        <span>{stageInfo.currentStage}</span>
+                                                      </span>
+                                                    </div>
+
+                                                    <div className="relative w-full h-1 bg-slate-950 rounded-full overflow-hidden border border-slate-800/80">
+                                                      <div 
+                                                        className={`h-full transition-all duration-300 ${stageInfo.color}`} 
+                                                        style={{ width: `${stageInfo.progressPercent}%` }}
+                                                      />
+                                                    </div>
+
+                                                    <div className="grid grid-cols-4 gap-0.5 text-[7px] font-mono text-center">
+                                                      {stages.map((stg, sIdx) => {
+                                                        const isActive = sIdx === stageInfo.stageIndex;
+                                                        const isPassed = sIdx <= stageInfo.stageIndex;
+                                                        return (
+                                                          <span 
+                                                            key={stg} 
+                                                            className={`truncate ${
+                                                              isActive 
+                                                                ? 'text-amber-300 font-extrabold underline' 
+                                                                : isPassed 
+                                                                  ? 'text-slate-300 font-bold' 
+                                                                  : 'text-slate-600'
+                                                            }`}
+                                                          >
+                                                            {stg.slice(0, 3).toUpperCase()}
+                                                          </span>
+                                                        );
+                                                      })}
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })()}
+
+                                              {/* AI-Summary Callout Hover Tooltip Box */}
+                                              {activeSummaryTooltipId === inc.id && (
+                                                <motion.div
+                                                  initial={{ opacity: 0, y: -4 }}
+                                                  animate={{ opacity: 1, y: 0 }}
+                                                  className="mt-1.5 p-2 rounded-lg bg-purple-950/90 border border-purple-500/60 shadow-xl font-mono text-[8.5px] text-purple-100 space-y-1"
+                                                >
+                                                  <div className="flex items-center justify-between border-b border-purple-800/60 pb-1">
+                                                    <span className="font-bold text-purple-300 flex items-center space-x-1">
+                                                      <Icons.Sparkles className="h-2.5 w-2.5 text-purple-400" />
+                                                      <span>Gemini AI Incident Progress Summary</span>
+                                                    </span>
+                                                    <div className="flex items-center space-x-1.5">
+                                                      <span className="text-[7px] text-purple-400">2-Sentence Brief</span>
+                                                      <button
+                                                        type="button"
+                                                        id={`btn-refresh-ai-summary-flat-${inc.id}`}
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          fetchAiSummaryForIncident(inc, true);
+                                                        }}
+                                                        className="flex items-center space-x-0.5 text-[7px] font-mono font-bold bg-purple-900/80 hover:bg-purple-800 text-purple-200 px-1 py-0.2 rounded border border-purple-700/60 transition-all cursor-pointer"
+                                                        title="Force-fetch latest AI progress summary"
+                                                      >
+                                                        <Icons.RefreshCw className={`h-2 w-2 text-purple-300 ${aiSummaries[inc.id]?.loading ? 'animate-spin' : ''}`} />
+                                                        <span>Refresh</span>
+                                                      </button>
+                                                    </div>
+                                                  </div>
+                                                  {aiSummaries[inc.id] ? (
+                                                    <div className="space-y-1">
+                                                      <p className="leading-relaxed text-purple-200 font-sans text-[9px]">
+                                                        {aiSummaries[inc.id].summary}
+                                                      </p>
+                                                      {aiSummaries[inc.id].blocker && (
+                                                        <p className="text-[7.5px] text-amber-300 bg-amber-950/60 p-1 rounded border border-amber-800/50">
+                                                          <span className="font-bold text-amber-400">Current Blocker:</span> {aiSummaries[inc.id].blocker}
+                                                        </p>
+                                                      )}
+                                                    </div>
+                                                  ) : (
+                                                    <div className="flex items-center space-x-1.5 text-purple-300 py-1">
+                                                      <Icons.Loader2 className="h-3 w-3 animate-spin text-purple-400" />
+                                                      <span>Generating AI progress & blocker summary...</span>
+                                                    </div>
+                                                  )}
+                                                </motion.div>
+                                              )}
+
+                                              {/* Incident Timeline Horizontal Drawer */}
+                                              {timelineExpandedIds.includes(inc.id) && (
+                                                <div className="mt-2 p-2 rounded-lg bg-slate-950/90 border border-indigo-500/40 space-y-2 font-mono text-[8px]" onClick={(e) => e.stopPropagation()}>
+                                                  <div className="flex items-center justify-between border-b border-slate-800 pb-1">
+                                                    <span className="font-bold text-indigo-300 flex items-center space-x-1">
+                                                      <Icons.GitCommit className="h-3 w-3 text-indigo-400" />
+                                                      <span>Incident State Transitions & Audit Timeline</span>
+                                                    </span>
+                                                    <span className="text-slate-500 text-[7px]">{inc.id}</span>
+                                                  </div>
+                                                  <div className="relative pt-1 pb-1 overflow-x-auto">
+                                                    <div className="flex items-center justify-between min-w-[320px] relative px-2">
+                                                      <div className="absolute top-3 left-4 right-4 h-0.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500 z-0" />
+                                                      {[
+                                                        { title: 'Open', time: (inc.createdAt || '').slice(11, 16) || '22:15', actor: 'Watcher', icon: Icons.AlertCircle },
+                                                        { title: 'Acknowledged', time: '22:18', actor: customIncidentAssignee[inc.id] || inc.assignee || 'Eshan Barua', icon: Icons.UserCheck },
+                                                        { title: 'Investigating', time: '22:25', actor: 'SupportPilot AI', icon: Icons.Cpu },
+                                                        { title: 'Mitigating', time: '22:32', actor: 'Remediation Pod', icon: Icons.Zap },
+                                                        { title: 'Resolved', time: 'Est 22:45', actor: 'NOC Controller', icon: Icons.CheckCircle2 }
+                                                      ].map((evt, idx) => (
+                                                        <div key={idx} className="relative z-10 flex flex-col items-center text-center space-y-0.5">
+                                                          <div className={`p-1 rounded-full border ${idx <= 3 ? 'bg-indigo-950 border-indigo-400 text-indigo-300 ring-2 ring-indigo-500/20' : 'bg-slate-900 border-slate-700 text-slate-500'}`}>
+                                                            <evt.icon className="h-2.5 w-2.5" />
+                                                          </div>
+                                                          <div className="font-bold text-slate-200 text-[7.5px]">{evt.title}</div>
+                                                          <div className="text-[6.5px] text-slate-400 font-mono">{evt.time}</div>
+                                                          <div className="text-[6px] text-indigo-300 bg-indigo-950/60 px-1 rounded border border-indigo-900 truncate max-w-[70px]">{evt.actor}</div>
+                                                        </div>
+                                                      ))}
+                                                    </div>
+                                                  </div>
+                                                </div>
+                                              )}
 
                                               {editingNoteItemId === itemId && (
                                                 <div className="mt-1.5 pt-1 border-t border-slate-800/80 flex items-center space-x-1" onClick={(e) => e.stopPropagation()}>
@@ -2184,58 +3002,143 @@ function AppContent() {
 
                         {/* PREVIEW SIDEBAR DRAWER (Right 5 Cols) */}
                         <div className="hidden md:block md:col-span-5 border-l border-slate-900 pl-3">
-                          {hoveredPreviewItem ? (
-                            <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2.5 sticky top-0 font-mono text-[9px] shadow-lg">
-                              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                                <span className="text-[8px] font-bold uppercase tracking-wider text-indigo-400 flex items-center space-x-1">
-                                  <Icons.Eye className="h-3 w-3 text-indigo-400" />
-                                  <span>Preview Mode</span>
+                          {/* Sidebar Tabs Header */}
+                          <div className="flex items-center space-x-1 border-b border-slate-800 pb-2 mb-2 font-mono text-[8px]">
+                            <button
+                              type="button"
+                              id="tab-sidebar-preview"
+                              onClick={() => setPreviewSidebarTab('preview')}
+                              className={`px-2 py-0.5 rounded font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                                previewSidebarTab === 'preview'
+                                  ? 'bg-indigo-600 text-white shadow-xs'
+                                  : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+                              }`}
+                            >
+                              <Icons.Eye className="h-2.5 w-2.5" />
+                              <span>Preview</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              id="tab-sidebar-related-runbooks"
+                              onClick={() => setPreviewSidebarTab('related_runbooks')}
+                              className={`px-2 py-0.5 rounded font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                                previewSidebarTab === 'related_runbooks'
+                                  ? 'bg-amber-600 text-white shadow-xs'
+                                  : 'bg-slate-900 text-amber-400 hover:text-amber-200 border border-slate-800'
+                              }`}
+                            >
+                              <Icons.BookOpen className="h-2.5 w-2.5 text-amber-300" />
+                              <span>Related Runbooks ({relatedRunbooksForFocused.length})</span>
+                            </button>
+                          </div>
+
+                          {previewSidebarTab === 'related_runbooks' ? (
+                            <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2 sticky top-0 font-mono text-[9px] shadow-lg max-h-[420px] overflow-y-auto">
+                              <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+                                <span className="text-[8px] font-bold uppercase tracking-wider text-amber-400 flex items-center space-x-1">
+                                  <Icons.BookOpen className="h-3 w-3 text-amber-400" />
+                                  <span>Matched Runbook Articles</span>
                                 </span>
-                                {hoveredPreviewItem.badge && (
-                                  <span className="px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 font-bold border border-indigo-800/60 text-[8px]">
-                                    {hoveredPreviewItem.badge}
-                                  </span>
-                                )}
-                              </div>
-
-                              <div>
-                                <span className="text-[7.5px] uppercase font-bold text-slate-500 tracking-wider">
-                                  Category: {hoveredPreviewItem.type}
+                                <span className="px-1.5 py-0.2 rounded bg-amber-950 text-amber-300 font-bold border border-amber-800/60 text-[7.5px]">
+                                  {relatedRunbooksForFocused.length} Matches
                                 </span>
-                                <h4 className="font-bold text-slate-100 text-[11px] font-sans leading-tight mt-0.5">
-                                  {hoveredPreviewItem.title}
-                                </h4>
-                                <p className="text-[8px] text-slate-500 font-mono mt-0.5">ID: {hoveredPreviewItem.id}</p>
                               </div>
 
-                              <div>
-                                <span className="text-[7.5px] uppercase font-bold text-slate-500 tracking-wider">Description / Body Snippet:</span>
-                                <div className="mt-1 p-2 rounded bg-slate-950 border border-slate-900/80 text-slate-300 line-clamp-6 text-[9px] leading-relaxed whitespace-pre-wrap">
-                                  {hoveredPreviewItem.subtitle}
-                                </div>
+                              <p className="text-[7.5px] text-slate-400 leading-tight">
+                                Auto-filtered runbooks matching incident title & keywords:
+                              </p>
+
+                              <div className="space-y-1.5 pt-0.5">
+                                {relatedRunbooksForFocused.map(kb => (
+                                  <div key={kb.id} className="p-2 rounded-lg bg-slate-950/90 border border-slate-800 hover:border-amber-500/50 transition-all space-y-1">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[7px] font-bold text-amber-300 bg-amber-950/80 px-1 py-0.2 rounded border border-amber-700/60">
+                                        ⚡ {kb.matchScore}% Keyword Match
+                                      </span>
+                                      <span className="text-[7px] text-slate-500 font-mono">{kb.id}</span>
+                                    </div>
+
+                                    <h5 className="font-sans font-bold text-slate-100 text-[9.5px] leading-snug">
+                                      {kb.title}
+                                    </h5>
+
+                                    <p className="text-[8px] text-slate-400 line-clamp-3 leading-relaxed font-mono bg-slate-900/60 p-1 rounded border border-slate-800/50">
+                                      {kb.content.replace(/^#+\s+/gm, '')}
+                                    </p>
+
+                                    <button
+                                      type="button"
+                                      id={`btn-open-related-runbook-${kb.id}`}
+                                      onClick={() => {
+                                        setSelectedSearchRunbook(kb);
+                                        setShowSearchPreview(false);
+                                        addRecentSearch(kb.title);
+                                        trackClick();
+                                      }}
+                                      className="w-full mt-1 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-bold text-[8px] transition-colors flex items-center justify-center space-x-1 cursor-pointer shadow-xs"
+                                    >
+                                      <Icons.ExternalLink className="h-2.5 w-2.5" />
+                                      <span>Open Runbook Article</span>
+                                    </button>
+                                  </div>
+                                ))}
                               </div>
-
-                              {hoveredPreviewItem.isArchived && (
-                                <div className="p-1.5 rounded bg-purple-950/40 border border-purple-800/40 text-purple-300 text-[8px] flex items-center space-x-1.5">
-                                  <Icons.Archive className="h-3 w-3 text-purple-400 shrink-0" />
-                                  <span>Historical Cold Vault Storage Record</span>
-                                </div>
-                              )}
-
-                              <button
-                                type="button"
-                                onClick={hoveredPreviewItem.onClick}
-                                className="w-full py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[9px] cursor-pointer transition-colors flex items-center justify-center space-x-1 mt-2 shadow-xs"
-                              >
-                                <span>Open Item Context</span>
-                                <Icons.ArrowRight className="h-3 w-3" />
-                              </button>
                             </div>
                           ) : (
-                            <div className="p-4 rounded-xl bg-slate-900/30 border border-slate-900/80 text-center text-slate-500 italic text-[9px] flex flex-col items-center justify-center h-full min-h-[160px] space-y-1.5">
-                              <Icons.MousePointer className="h-5 w-5 text-slate-600" />
-                              <span>Hover over any result or use 1-9 / ↑↓ keys to preview record details</span>
-                            </div>
+                            hoveredPreviewItem ? (
+                              <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2.5 sticky top-0 font-mono text-[9px] shadow-lg">
+                                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                                  <span className="text-[8px] font-bold uppercase tracking-wider text-indigo-400 flex items-center space-x-1">
+                                    <Icons.Eye className="h-3 w-3 text-indigo-400" />
+                                    <span>Preview Mode</span>
+                                  </span>
+                                  {hoveredPreviewItem.badge && (
+                                    <span className="px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 font-bold border border-indigo-800/60 text-[8px]">
+                                      {hoveredPreviewItem.badge}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div>
+                                  <span className="text-[7.5px] uppercase font-bold text-slate-500 tracking-wider">
+                                    Category: {hoveredPreviewItem.type}
+                                  </span>
+                                  <h4 className="font-bold text-slate-100 text-[11px] font-sans leading-tight mt-0.5">
+                                    {hoveredPreviewItem.title}
+                                  </h4>
+                                  <p className="text-[8px] text-slate-500 font-mono mt-0.5">ID: {hoveredPreviewItem.id}</p>
+                                </div>
+
+                                <div>
+                                  <span className="text-[7.5px] uppercase font-bold text-slate-500 tracking-wider">Description / Body Snippet:</span>
+                                  <div className="mt-1 p-2 rounded bg-slate-950 border border-slate-900/80 text-slate-300 line-clamp-6 text-[9px] leading-relaxed whitespace-pre-wrap">
+                                    {hoveredPreviewItem.subtitle}
+                                  </div>
+                                </div>
+
+                                {hoveredPreviewItem.isArchived && (
+                                  <div className="p-1.5 rounded bg-purple-950/40 border border-purple-800/40 text-purple-300 text-[8px] flex items-center space-x-1.5">
+                                    <Icons.Archive className="h-3 w-3 text-purple-400 shrink-0" />
+                                    <span>Historical Cold Vault Storage Record</span>
+                                  </div>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={hoveredPreviewItem.onClick}
+                                  className="w-full py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[9px] cursor-pointer transition-colors flex items-center justify-center space-x-1 mt-2 shadow-xs"
+                                >
+                                  <span>Open Item Context</span>
+                                  <Icons.ArrowRight className="h-3 w-3" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="p-4 rounded-xl bg-slate-900/30 border border-slate-900/80 text-center text-slate-500 italic text-[9px] flex flex-col items-center justify-center h-full min-h-[160px] space-y-1.5">
+                                <Icons.MousePointer className="h-5 w-5 text-slate-600" />
+                                <span>Hover over any result or use 1-9 / ↑↓ keys to preview record details</span>
+                              </div>
+                            )
                           )}
                         </div>
                       </div>
@@ -2355,6 +3258,124 @@ function AppContent() {
               <span className="hidden sm:inline">Search Command Console...</span>
               <span className="rounded bg-slate-800 px-1 py-0.5 font-mono text-[9px] text-slate-400">Ctrl+K</span>
             </button>
+
+            {/* USER ACCOUNT & AUTHENTICATION CONSOLE MENU CHIP */}
+            <div className="relative">
+              <button
+                type="button"
+                id="btn-user-profile-menu"
+                onClick={() => setShowProfileMenu(!showProfileMenu)}
+                className="flex items-center space-x-2 rounded-xl border border-indigo-500/30 bg-slate-900/90 hover:bg-slate-800 p-1 pr-2.5 text-xxs text-white transition-all cursor-pointer shadow-sm hover:border-indigo-500/60"
+                title="Account Settings & Authentication Console"
+              >
+                <div className="relative">
+                  <img
+                    src={currentUser.avatar}
+                    alt={currentUser.name}
+                    className="h-6 w-6 rounded-lg object-cover border border-indigo-500/40"
+                  />
+                  <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-emerald-500 border border-slate-950" />
+                </div>
+                <div className="hidden xl:block text-left">
+                  <div className="font-bold text-slate-100 text-[10.5px] leading-tight truncate max-w-[120px]">
+                    {currentUser.name}
+                  </div>
+                  <div className="text-[8.5px] font-mono text-indigo-400 leading-tight">
+                    {currentUser.pod ? currentUser.pod.split(' ')[0] : 'Operator'}
+                  </div>
+                </div>
+                <Icons.ChevronDown className="h-3 w-3 text-slate-400" />
+              </button>
+
+              <AnimatePresence>
+                {showProfileMenu && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setShowProfileMenu(false)}
+                    />
+                    <motion.div
+                      initial={{ opacity: 0, y: 8, scale: 0.96 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 8, scale: 0.96 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute right-0 top-10 z-50 w-72 rounded-2xl border border-slate-800 bg-slate-950 p-3.5 shadow-2xl text-slate-200"
+                    >
+                      <div className="flex items-center space-x-3 p-2 rounded-xl bg-slate-900/80 border border-slate-800 mb-2">
+                        <img
+                          src={currentUser.avatar}
+                          alt={currentUser.name}
+                          className="h-10 w-10 rounded-xl object-cover border border-indigo-500/40 shrink-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="font-bold text-white text-xs truncate">{currentUser.name}</div>
+                          <div className="text-[9px] font-mono text-indigo-400 truncate">{currentUser.email}</div>
+                          <div className="text-[8.5px] font-mono text-slate-400 truncate mt-0.5">{currentUser.role}</div>
+                        </div>
+                      </div>
+
+                      <div className="px-2 py-1.5 space-y-1 border-t border-slate-900 text-xxs font-mono">
+                        <div className="flex items-center justify-between text-slate-400">
+                          <span>Pod Assignment:</span>
+                          <span className="text-indigo-300 font-bold">{currentUser.pod}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-400">
+                          <span>2FA Protection:</span>
+                          <span className={currentUser.is2FAEnabled ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
+                            {currentUser.is2FAEnabled ? 'Enforced (TOTP)' : 'Disabled'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1 pt-2 border-t border-slate-900">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowProfileMenu(false);
+                            setIsAuthModalOpen(true);
+                          }}
+                          className="w-full flex items-center space-x-2.5 p-2 rounded-xl hover:bg-slate-900 text-slate-200 hover:text-white transition-all text-xs font-semibold cursor-pointer"
+                        >
+                          <Icons.KeyRound className="h-4 w-4 text-indigo-400 shrink-0" />
+                          <span>Switch Account / Auth Console</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowProfileMenu(false);
+                            setIsLocked(true);
+                            handleAddAuditLog(
+                              currentUser.name,
+                              'MANUAL_SESSION_LOCK',
+                              'Compliance Engine',
+                              'SUCCESS',
+                              'Operator manually locked workspace session.'
+                            );
+                          }}
+                          className="w-full flex items-center space-x-2.5 p-2 rounded-xl hover:bg-slate-900 text-slate-200 hover:text-white transition-all text-xs font-semibold cursor-pointer"
+                        >
+                          <Icons.Lock className="h-4 w-4 text-amber-400 shrink-0" />
+                          <span>Lock Operator Session</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowProfileMenu(false);
+                            handleLogout();
+                          }}
+                          className="w-full flex items-center space-x-2.5 p-2 rounded-xl hover:bg-rose-950/40 border border-transparent hover:border-rose-900 text-rose-400 hover:text-rose-300 transition-all text-xs font-semibold cursor-pointer"
+                        >
+                          <Icons.LogOut className="h-4 w-4 text-rose-400 shrink-0" />
+                          <span>Sign Out / Log Out</span>
+                        </button>
+                      </div>
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </header>
 
@@ -2373,10 +3394,10 @@ function AppContent() {
           <AnimatePresence mode="wait">
             <motion.div
               key={activeTab}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.18, ease: 'easeOut' }}
+              initial={{ opacity: 0, x: 24, scale: 0.99 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: -24, scale: 0.99 }}
+              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
               className="h-full w-full"
             >
               <ErrorBoundary>
@@ -2507,6 +3528,15 @@ function AppContent() {
         onAddAuditLog={handleAddAuditLog}
       />
 
+      {/* FULL AUTHENTICATION & LOGIN WORKFLOW MODAL */}
+      <AuthConsoleModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        currentUser={currentUser}
+        onLoginSuccess={handleLoginSuccess}
+        handleAddAuditLog={handleAddAuditLog}
+      />
+
       {/* COMMAND PALETTE MODAL */}
       <CommandPalette
         isOpen={isCommandPaletteOpen}
@@ -2557,12 +3587,14 @@ function AppContent() {
               </p>
 
               <div className="mt-6 rounded-xl bg-slate-900/40 border border-slate-900/60 p-4 flex items-center space-x-3.5 text-left">
-                <div className="relative h-10 w-10 shrink-0 rounded-lg bg-indigo-600/20 border border-indigo-500/15 flex items-center justify-center">
-                  <Icons.User className="h-5 w-5 text-indigo-400" />
-                </div>
+                <img
+                  src={currentUser.avatar}
+                  alt={currentUser.name}
+                  className="h-10 w-10 shrink-0 rounded-lg object-cover border border-indigo-500/30"
+                />
                 <div className="min-w-0">
-                  <div className="text-xs font-bold text-white">{ActiveUser.name}</div>
-                  <div className="text-[9px] font-mono text-indigo-400 uppercase tracking-wider">{ActiveUser.role}</div>
+                  <div className="text-xs font-bold text-white">{currentUser.name}</div>
+                  <div className="text-[9px] font-mono text-indigo-400 uppercase tracking-wider">{currentUser.role}</div>
                 </div>
               </div>
 
@@ -2571,7 +3603,7 @@ function AppContent() {
                   e.preventDefault();
                   setIsLocked(false);
                   handleAddAuditLog(
-                    "Eshan Barua (CTO)", 
+                    currentUser.name, 
                     "Authorize Resume", 
                     "Compliance Engine", 
                     "SUCCESS", 
@@ -2603,6 +3635,19 @@ function AppContent() {
                   <Icons.Unlock className="h-3.5 w-3.5" />
                   <span>Verify and Resume</span>
                 </button>
+
+                <div className="pt-2 border-t border-slate-900">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAuthModalOpen(true);
+                    }}
+                    className="text-[9.5px] font-mono text-indigo-400 hover:text-indigo-300 underline cursor-pointer flex items-center justify-center space-x-1.5 mx-auto"
+                  >
+                    <Icons.Chrome className="h-3 w-3 text-emerald-400" />
+                    <span>Or Sign In with Google / Phone OTP / 2FA</span>
+                  </button>
+                </div>
                 
                 <p className="text-[9px] text-slate-500 font-mono mt-2">
                   Protected session will auto-lock again after 15m of inactivity.

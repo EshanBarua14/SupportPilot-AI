@@ -18,6 +18,18 @@ export interface UserProfile {
   permissions: string[];
 }
 
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  avatar: string;
+  pod: string;
+  phone?: string;
+  is2FAEnabled?: boolean;
+  authMethod?: 'password' | 'google' | 'phone_otp' | 'sso';
+}
+
 export interface LogEntry {
   timestamp: string;
   level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'FATAL';

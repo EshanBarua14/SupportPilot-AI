@@ -14,9 +14,12 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
   // Search & Filter state
   const [searchTerm, setSearchTerm] = useState('');
   const [filterOperator, setFilterOperator] = useState('ALL');
+  const [filterActorName, setFilterActorName] = useState('');
   const [filterModule, setFilterModule] = useState('ALL');
   const [filterAction, setFilterAction] = useState('ALL');
   const [filterStatus, setFilterStatus] = useState('ALL');
+  const [filterStartDate, setFilterStartDate] = useState('');
+  const [filterEndDate, setFilterEndDate] = useState('');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
 
   // Extract unique values for filters
@@ -33,11 +36,22 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
       log.payload.toLowerCase().includes(searchTerm.toLowerCase());
 
     const matchesOperator = filterOperator === 'ALL' || log.operator === filterOperator;
+    const matchesActorName = !filterActorName || log.operator.toLowerCase().includes(filterActorName.toLowerCase());
     const matchesModule = filterModule === 'ALL' || log.module === filterModule;
     const matchesAction = filterAction === 'ALL' || log.action === filterAction;
     const matchesStatus = filterStatus === 'ALL' || log.status === filterStatus;
 
-    return matchesSearch && matchesOperator && matchesModule && matchesAction && matchesStatus;
+    let matchesDateRange = true;
+    if (filterStartDate) {
+      matchesDateRange = matchesDateRange && new Date(log.timestamp) >= new Date(filterStartDate);
+    }
+    if (filterEndDate) {
+      const endOfBoundary = new Date(filterEndDate);
+      endOfBoundary.setHours(23, 59, 59, 999);
+      matchesDateRange = matchesDateRange && new Date(log.timestamp) <= endOfBoundary;
+    }
+
+    return matchesSearch && matchesOperator && matchesActorName && matchesModule && matchesAction && matchesStatus && matchesDateRange;
   }).sort((a, b) => {
     const dateA = new Date(a.timestamp).getTime();
     const dateB = new Date(b.timestamp).getTime();
@@ -47,9 +61,12 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
   const clearFilters = () => {
     setSearchTerm('');
     setFilterOperator('ALL');
+    setFilterActorName('');
     setFilterModule('ALL');
     setFilterAction('ALL');
     setFilterStatus('ALL');
+    setFilterStartDate('');
+    setFilterEndDate('');
     setSortOrder('desc');
   };
 
@@ -174,7 +191,7 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2.5">
                 {/* Search Term */}
                 <div className="md:col-span-2 space-y-1">
                   <label className="text-[10px] text-slate-400 font-medium">Text Search</label>
@@ -185,21 +202,33 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
                       placeholder="Search operator, module, action..."
-                      className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-800 bg-slate-950/90 text-slate-200 outline-none focus:border-indigo-500 transition-colors"
+                      className="w-full pl-8 pr-2.5 py-1.5 rounded-lg border border-slate-800 bg-slate-950/90 text-slate-200 text-xxs outline-none focus:border-indigo-500 transition-colors"
                     />
                   </div>
                 </div>
 
-                {/* Operator Filter */}
+                {/* Actor Name Filter */}
                 <div className="space-y-1">
-                  <label className="text-[10px] text-slate-400 font-medium">Operator</label>
+                  <label className="text-[10px] text-slate-400 font-medium">Actor Name</label>
+                  <input
+                    type="text"
+                    value={filterActorName}
+                    onChange={(e) => setFilterActorName(e.target.value)}
+                    placeholder="Filter actor..."
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-800 bg-slate-950/90 text-slate-200 text-xxs outline-none focus:border-indigo-500 transition-colors"
+                  />
+                </div>
+
+                {/* Action Type Filter */}
+                <div className="space-y-1">
+                  <label className="text-[10px] text-slate-400 font-medium">Action Type</label>
                   <select
-                    value={filterOperator}
-                    onChange={(e) => setFilterOperator(e.target.value)}
-                    className="w-full p-1.5 rounded-lg border border-slate-800 bg-slate-950/90 text-slate-200 cursor-pointer outline-none focus:border-indigo-500"
+                    value={filterAction}
+                    onChange={(e) => setFilterAction(e.target.value)}
+                    className="w-full p-1.5 rounded-lg border border-slate-800 bg-slate-950/90 text-slate-200 text-xxs cursor-pointer outline-none focus:border-indigo-500"
                   >
-                    {operators.map(op => (
-                      <option key={op} value={op}>{op === 'ALL' ? 'All Operators' : op.split('@')[0]}</option>
+                    {actions.map(act => (
+                      <option key={act} value={act}>{act === 'ALL' ? 'All Actions' : act}</option>
                     ))}
                   </select>
                 </div>
@@ -210,7 +239,7 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
                   <select
                     value={filterModule}
                     onChange={(e) => setFilterModule(e.target.value)}
-                    className="w-full p-1.5 rounded-lg border border-slate-800 bg-slate-950/90 text-slate-200 cursor-pointer outline-none focus:border-indigo-500"
+                    className="w-full p-1.5 rounded-lg border border-slate-800 bg-slate-950/90 text-slate-200 text-xxs cursor-pointer outline-none focus:border-indigo-500"
                   >
                     {modules.map(mod => (
                       <option key={mod} value={mod}>{mod === 'ALL' ? 'All Modules' : mod}</option>
@@ -218,18 +247,26 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
                   </select>
                 </div>
 
-                {/* Status Filter */}
+                {/* Start Date Range */}
                 <div className="space-y-1">
-                  <label className="text-[10px] text-slate-400 font-medium">Status</label>
-                  <select
-                    value={filterStatus}
-                    onChange={(e) => setFilterStatus(e.target.value)}
-                    className="w-full p-1.5 rounded-lg border border-slate-800 bg-slate-950/90 text-slate-200 cursor-pointer outline-none focus:border-indigo-500"
-                  >
-                    <option value="ALL">All Statuses</option>
-                    <option value="SUCCESS">SUCCESS</option>
-                    <option value="FAILED">FAILED</option>
-                  </select>
+                  <label className="text-[10px] text-slate-400 font-medium">Start Date</label>
+                  <input
+                    type="date"
+                    value={filterStartDate}
+                    onChange={(e) => setFilterStartDate(e.target.value)}
+                    className="w-full p-1.5 rounded-lg border border-slate-800 bg-slate-950/90 text-slate-200 text-xxs outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                {/* End Date Range */}
+                <div className="space-y-1">
+                  <label className="text-[10px] text-slate-400 font-medium">End Date</label>
+                  <input
+                    type="date"
+                    value={filterEndDate}
+                    onChange={(e) => setFilterEndDate(e.target.value)}
+                    className="w-full p-1.5 rounded-lg border border-slate-800 bg-slate-950/90 text-slate-200 text-xxs outline-none focus:border-indigo-500"
+                  />
                 </div>
 
                 {/* Sort Order Filter */}
@@ -238,7 +275,7 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
                   <select
                     value={sortOrder}
                     onChange={(e) => setSortOrder(e.target.value as 'asc' | 'desc')}
-                    className="w-full p-1.5 rounded-lg border border-slate-800 bg-slate-950/90 text-slate-200 cursor-pointer outline-none focus:border-indigo-500"
+                    className="w-full p-1.5 rounded-lg border border-slate-800 bg-slate-950/90 text-slate-200 text-xxs cursor-pointer outline-none focus:border-indigo-500"
                   >
                     <option value="desc">Newest First</option>
                     <option value="asc">Oldest First</option>

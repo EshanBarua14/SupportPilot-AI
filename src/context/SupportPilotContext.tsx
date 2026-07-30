@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { AuditLogEntry } from '../types';
+import { AuditLogEntry, AuthUser } from '../types';
 import { SystemNotification } from '../components/NotificationBell';
 import { SeedAuditTrail, ActiveUser, InitialIncidents, InitialKBArticles } from '../data/simulation';
 
@@ -66,6 +66,12 @@ export interface SupportPilotContextType {
   hasSearchResults: boolean;
   isSystemFrozen: boolean;
   setIsSystemFrozen: (frozen: boolean) => void;
+  currentUser: AuthUser;
+  setCurrentUser: React.Dispatch<React.SetStateAction<AuthUser>>;
+  isAuthModalOpen: boolean;
+  setIsAuthModalOpen: (open: boolean) => void;
+  handleLogout: () => void;
+  handleLoginSuccess: (user: AuthUser, authMethod: 'password' | 'google' | 'phone_otp' | 'sso') => void;
 }
 
 const SupportPilotContext = createContext<SupportPilotContextType | undefined>(undefined);
@@ -84,7 +90,7 @@ interface SupportPilotProviderProps {
 
 export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
   const [activeTab, setActiveTab] = useState<TabType>('workspace');
-  const [modelSelection, setModelSelection] = useState('gemini-3.5-flash');
+  const [modelSelection, setModelSelection] = useState('gemini-3.6-flash');
   const [isSystemFrozen, setIsSystemFrozen] = useState(false);
 
   // Sidebar Layout Preferences with localStorage persistence
@@ -131,20 +137,35 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
   const [showSearchPreview, setShowSearchPreview] = useState(false);
   const [selectedSearchRunbook, setSelectedSearchRunbook] = useState<any>(null);
 
-  // Security Lock Session State
+  // Security Lock & Authentication Session State
+  const [currentUser, setCurrentUser] = useState<AuthUser>(() => {
+    const saved = localStorage.getItem('supportpilot_current_user');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return {
+      id: 'usr_cto_01',
+      name: 'Eshan Barua (CTO)',
+      email: 'eshanbaruabarua@gmail.com',
+      role: 'Chief Technology Officer & Lead Security Auditor',
+      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=250&q=80',
+      pod: 'SRE & Executive Operations',
+      phone: '+1 (555) 019-2834',
+      is2FAEnabled: true,
+      authMethod: 'google',
+    };
+  });
+
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [isLocked, setIsLocked] = useState<boolean>(false);
   const [secondsRemaining, setSecondsRemaining] = useState<number>(900); // 15 mins = 900s
   const [themeSuggestion, setThemeSuggestion] = useState<string | null>(null);
 
-  // Live system alerts ticker state
-  const [tickerAlerts, setTickerAlerts] = useState([
-    { id: 'alt-01', message: "Acme Billing Service pod terminated by Linux OOM manager. Outage ticket #inc_001 generated.", zone: "prod-east-1", category: "OOM" },
-    { id: 'alt-02', message: "PostgreSQL database connection pool limits exceeded (active: 98/100).", zone: "prod-east-1", category: "Database" },
-    { id: 'alt-03', message: "Redis cache connection pool exhausted. Incoming queries queued.", zone: "prod-west-2", category: "Cache" },
-    { id: 'alt-04', message: "Kafka consumer group billing-workers lagged by > 5000 messages.", zone: "prod-east-1", category: "Streaming" }
-  ]);
-  const [selectedTickerIds, setSelectedTickerIds] = useState<string[]>([]);
-  const [showBulkAlertPopover, setShowBulkAlertPopover] = useState(false);
+  useEffect(() => {
+    localStorage.setItem('supportpilot_current_user', JSON.stringify(currentUser));
+  }, [currentUser]);
 
   // Audit addition helper
   const handleAddAuditLog = useCallback((
@@ -165,6 +186,44 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
     };
     setAuditLogs((prev) => [newLog, ...prev]);
   }, []);
+
+  const handleLogout = useCallback(() => {
+    setIsAuthModalOpen(true);
+    setIsLocked(true);
+    setToastMessage(`Operator session for ${currentUser.name} signed out. Secure login required.`);
+    handleAddAuditLog(
+      currentUser.name,
+      'USER_LOGOUT',
+      'Authentication Engine',
+      'SUCCESS',
+      `Signed out user session (${currentUser.email}). Operational console locked.`
+    );
+  }, [currentUser, handleAddAuditLog]);
+
+  const handleLoginSuccess = useCallback((user: AuthUser, authMethod: 'password' | 'google' | 'phone_otp' | 'sso') => {
+    setCurrentUser(user);
+    setIsAuthModalOpen(false);
+    setIsLocked(false);
+    setSecondsRemaining(900);
+    setToastMessage(`Welcome back, ${user.name}! Authenticated via ${authMethod.toUpperCase()}.`);
+    handleAddAuditLog(
+      user.name,
+      'SESSION_AUTHENTICATED',
+      'Authentication Engine',
+      'SUCCESS',
+      `Session authorized for ${user.email} (${user.role}) via ${authMethod.toUpperCase()}.`
+    );
+  }, [handleAddAuditLog]);
+
+  // Live system alerts ticker state
+  const [tickerAlerts, setTickerAlerts] = useState([
+    { id: 'alt-01', message: "Acme Billing Service pod terminated by Linux OOM manager. Outage ticket #inc_001 generated.", zone: "prod-east-1", category: "OOM" },
+    { id: 'alt-02', message: "PostgreSQL database connection pool limits exceeded (active: 98/100).", zone: "prod-east-1", category: "Database" },
+    { id: 'alt-03', message: "Redis cache connection pool exhausted. Incoming queries queued.", zone: "prod-west-2", category: "Cache" },
+    { id: 'alt-04', message: "Kafka consumer group billing-workers lagged by > 5000 messages.", zone: "prod-east-1", category: "Streaming" }
+  ]);
+  const [selectedTickerIds, setSelectedTickerIds] = useState<string[]>([]);
+  const [showBulkAlertPopover, setShowBulkAlertPopover] = useState(false);
 
   const handleBulkAlertAction = useCallback((action: 'Acknowledge' | 'Dismiss') => {
     setSelectedTickerIds((currentSelected) => {
@@ -578,6 +637,12 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
         hasSearchResults,
         isSystemFrozen,
         setIsSystemFrozen,
+        currentUser,
+        setCurrentUser,
+        isAuthModalOpen,
+        setIsAuthModalOpen,
+        handleLogout,
+        handleLoginSuccess,
       }}
     >
       {children}

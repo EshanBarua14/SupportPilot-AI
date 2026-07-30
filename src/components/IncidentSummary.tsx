@@ -5,9 +5,15 @@ import { AreaChart, Area, ResponsiveContainer, Tooltip as RechartsTooltip } from
 
 interface IncidentSummaryProps {
   incidents: Incident[];
+  severityFilter?: string;
+  onSeverityFilterChange?: (sev: string) => void;
 }
 
-export const IncidentSummary: React.FC<IncidentSummaryProps> = ({ incidents }) => {
+export const IncidentSummary: React.FC<IncidentSummaryProps> = ({
+  incidents,
+  severityFilter = 'ALL',
+  onSeverityFilterChange
+}) => {
   const activeCount = incidents.filter(i => i.status !== 'SOLVED').length;
   const criticalCount = incidents.filter(i => i.severity === 'CRITICAL' && i.status !== 'SOLVED').length;
   const warningCount = incidents.filter(i => (i.severity === 'HIGH' || i.severity === 'MEDIUM') && i.status !== 'SOLVED').length;
@@ -73,6 +79,30 @@ export const IncidentSummary: React.FC<IncidentSummaryProps> = ({ incidents }) =
                 <Area type="monotone" dataKey="count" stroke="#818cf8" strokeWidth={1.5} fill="url(#freqSparklineGrad)" isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Header Severity Filter Dropdown (SEV-1 through SEV-4) */}
+        <div className="bg-slate-950/80 rounded-lg px-2.5 py-1 border border-indigo-500/30 flex items-center space-x-2 shadow-sm shrink-0">
+          <Icons.Filter className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+          <div className="flex flex-col">
+            <span className="text-[8px] font-mono text-indigo-300 font-bold uppercase tracking-wider">Severity Filter</span>
+            <div className="relative">
+              <select
+                id="header-severity-filter"
+                value={severityFilter}
+                onChange={(e) => onSeverityFilterChange?.(e.target.value)}
+                className="bg-transparent text-[10px] font-mono font-bold text-white pr-4 py-0.5 outline-none appearance-none cursor-pointer"
+                title="Quickly filter active workspace incidents by urgency tier (SEV-1 through SEV-4)"
+              >
+                <option value="ALL" className="bg-slate-950 text-slate-200">ALL SEVERITIES</option>
+                <option value="P0" className="bg-slate-950 text-rose-400 font-bold">SEV-1 (Critical / P0)</option>
+                <option value="P1" className="bg-slate-950 text-amber-400 font-bold">SEV-2 (High / P1)</option>
+                <option value="P2" className="bg-slate-950 text-indigo-300 font-bold">SEV-3 (Medium / P2)</option>
+                <option value="P3" className="bg-slate-950 text-slate-400 font-bold">SEV-4 (Low / P3)</option>
+              </select>
+              <Icons.ChevronDown className="h-3 w-3 text-indigo-400 absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
           </div>
         </div>
 
