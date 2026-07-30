@@ -28,6 +28,8 @@ export interface AuthUser {
   phone?: string;
   is2FAEnabled?: boolean;
   authMethod?: 'password' | 'google' | 'phone_otp' | 'sso';
+  sessionToken?: string;
+  totpSecret?: string;
 }
 
 export interface LogEntry {

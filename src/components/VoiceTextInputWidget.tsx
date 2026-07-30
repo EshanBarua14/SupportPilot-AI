@@ -88,26 +88,48 @@ export const VoiceTextInputWidget: React.FC<VoiceTextInputWidgetProps> = ({
   }, []);
 
   const parseVoiceCommands = (text: string) => {
-    if (!onCommand) return;
     const lower = text.toLowerCase();
     let matchedCmd = '';
-    let matchedParam = undefined;
+    let matchedParam: any = undefined;
 
-    if (lower.includes('status solved') || lower.includes('mark solved') || lower.includes('resolve incident')) {
+    // SupportPilot wake phrase or direct phrase matching
+    if (lower.includes('sev-1') || lower.includes('sev 1') || lower.includes('critical incidents') || lower.includes('show me critical')) {
+      matchedCmd = 'FILTER_SEVERITY';
+      matchedParam = 'CRITICAL';
+    } else if (lower.includes('sev-2') || lower.includes('sev 2') || lower.includes('high incidents')) {
+      matchedCmd = 'FILTER_SEVERITY';
+      matchedParam = 'HIGH';
+    } else if (lower.includes('sev-3') || lower.includes('sev 3') || lower.includes('medium incidents')) {
+      matchedCmd = 'FILTER_SEVERITY';
+      matchedParam = 'MEDIUM';
+    } else if (lower.includes('status solved') || lower.includes('mark solved') || lower.includes('resolve incident') || lower.includes('set status to resolved')) {
       matchedCmd = 'SET_STATUS';
       matchedParam = 'SOLVED';
-    } else if (lower.includes('status investigating') || lower.includes('mark investigating')) {
+    } else if (lower.includes('status investigating') || lower.includes('mark investigating') || lower.includes('set status to investigating')) {
       matchedCmd = 'SET_STATUS';
       matchedParam = 'INVESTIGATING';
-    } else if (lower.includes('escalate incident') || lower.includes('status escalated')) {
+    } else if (lower.includes('escalate incident') || lower.includes('status escalated') || lower.includes('set status to escalated')) {
       matchedCmd = 'SET_STATUS';
       matchedParam = 'ESCALATED';
     } else if (lower.includes('run investigation') || lower.includes('analyze incident')) {
       matchedCmd = 'RUN_INVESTIGATION';
+    } else if (lower.includes('show all incidents') || lower.includes('clear filter')) {
+      matchedCmd = 'FILTER_SEVERITY';
+      matchedParam = 'all';
     }
 
     if (matchedCmd) {
-      onCommand(matchedCmd, matchedParam);
+      if (onCommand) {
+        onCommand(matchedCmd, matchedParam);
+      }
+
+      // Dispatch global events for instant app-wide synchronization
+      if (matchedCmd === 'FILTER_SEVERITY') {
+        window.dispatchEvent(new CustomEvent('voice-filter-severity', { detail: { severity: matchedParam } }));
+      } else if (matchedCmd === 'SET_STATUS') {
+        window.dispatchEvent(new CustomEvent('voice-set-status', { detail: { status: matchedParam } }));
+      }
+
       window.dispatchEvent(new CustomEvent('voice-command-processed', {
         detail: {
           id: `cmd-${Date.now()}`,
@@ -117,6 +139,10 @@ export const VoiceTextInputWidget: React.FC<VoiceTextInputWidgetProps> = ({
           param: matchedParam,
           status: 'SUCCESS'
         }
+      }));
+
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: `Voice command recognized: ${matchedCmd} (${matchedParam || 'exec'})` }
       }));
     }
   };

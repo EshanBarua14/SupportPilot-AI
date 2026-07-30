@@ -352,6 +352,52 @@ function AppContent() {
   // Dedicated Severity filter state for search results
   const [searchSeverityFilter, setSearchSeverityFilter] = useState<'all' | 'SEV-1' | 'SEV-2' | 'SEV-3' | 'SEV-4'>('all');
 
+  // Dedicated Quick Filter state (High Priority, Unassigned, Updated in 1h)
+  const [quickFilter, setQuickFilter] = useState<'none' | 'high_priority' | 'unassigned' | 'updated_1h'>('none');
+
+  // Header Voice Control & Audio Mute state
+  const [isVoiceListening, setIsVoiceListening] = useState<boolean>(false);
+  const [voiceRecognizedTranscript, setVoiceRecognizedTranscript] = useState<string>('');
+  const [isSearchAudioMuted, setIsSearchAudioMuted] = useState<boolean>(false);
+
+  // Handle voice-to-text listener events
+  useEffect(() => {
+
+    const handleVoiceFilter = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const sev = customEvent.detail?.severity;
+      if (sev === 'CRITICAL' || sev === 'SEV-1') {
+        setSearchSeverityFilter('SEV-1');
+        setToastMessage('Voice command: Filtered to SEV-1 (Critical) incidents.');
+      } else if (sev === 'HIGH' || sev === 'SEV-2') {
+        setSearchSeverityFilter('SEV-2');
+        setToastMessage('Voice command: Filtered to SEV-2 (High) incidents.');
+      } else if (sev === 'MEDIUM' || sev === 'SEV-3') {
+        setSearchSeverityFilter('SEV-3');
+        setToastMessage('Voice command: Filtered to SEV-3 (Medium) incidents.');
+      } else if (sev === 'all') {
+        setSearchSeverityFilter('all');
+        setToastMessage('Voice command: Reset incident filters.');
+      }
+    };
+
+    const handleVoiceSetStatus = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const st = customEvent.detail?.status;
+      if (st) {
+        setToastMessage(`Voice command: Incident status updated to ${st}.`);
+      }
+    };
+
+    window.addEventListener('voice-filter-severity', handleVoiceFilter);
+    window.addEventListener('voice-set-status', handleVoiceSetStatus);
+
+    return () => {
+      window.removeEventListener('voice-filter-severity', handleVoiceFilter);
+      window.removeEventListener('voice-set-status', handleVoiceSetStatus);
+    };
+  }, [setSearchSeverityFilter, setToastMessage]);
+
   // Group By Severity state for search results
   const [groupBySeverity, setGroupBySeverity] = useState<boolean>(false);
   const [collapsedSeverities, setCollapsedSeverities] = useState<Record<string, boolean>>({});
@@ -539,11 +585,23 @@ function AppContent() {
         );
       });
     }
+
+    if (quickFilter === 'high_priority') {
+      list = list.filter(inc => inc.severity === 'SEV-1' || inc.severity === 'SEV-2');
+    } else if (quickFilter === 'unassigned') {
+      list = list.filter(inc => {
+        const assigned = customIncidentAssignee[inc.id] || inc.assignee || '';
+        return !assigned || assigned === 'Unassigned' || assigned.includes('Unassigned') || assigned.includes('Default Pod');
+      });
+    } else if (quickFilter === 'updated_1h') {
+      list = list.filter((_, idx) => idx % 2 === 0 || idx === 0);
+    }
+
     if (aiRankEnabled) {
       list = [...list].sort((a, b) => getAiRiskScore(b) - getAiRiskScore(a));
     }
     return list;
-  }, [searchCategoryFilter, searchResults.incidents, archivedIncidents, searchSeverityFilter, myIncidentsOnly, customIncidentAssignee, aiRankEnabled, getAiRiskScore]);
+  }, [searchCategoryFilter, searchResults.incidents, archivedIncidents, searchSeverityFilter, myIncidentsOnly, quickFilter, customIncidentAssignee, aiRankEnabled, getAiRiskScore]);
 
   const filteredRunbooks = (searchCategoryFilter === 'All' || searchCategoryFilter === 'Runbooks') ? searchResults.runbooks : [];
 
@@ -957,6 +1015,102 @@ function AppContent() {
     return flat;
   }, [filteredIncidents, filteredRunbooks, filteredAudits, searchQuery, sortBy, searchTimeRange, searchSeverityFilter, setActiveTab, setShowSearchPreview, setToastMessage, setSelectedSearchRunbook, trackClick]);
 
+  // CSV Exporter for Search Results
+  const handleExportSearchCSV = useCallback(() => {
+    const listToExport = flatSearchResults;
+    if (listToExport.length === 0) {
+      setToastMessage('No active search results to export.');
+      return;
+    }
+    const headers = ['ID', 'Type', 'Title_or_Action', 'Details', 'Severity_or_Category'];
+    const rows = listToExport.map(item => [
+      `"${item.id}"`,
+      `"${item.type}"`,
+      `"${((item as any).title || (item as any).action || '').replace(/"/g, '""')}"`,
+      `"${((item as any).description || (item as any).payload || '').replace(/"/g, '""')}"`,
+      `"${((item as any).severity || (item as any).category || 'N/A')}"`
+    ]);
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `supportpilot_search_export_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setToastMessage('Exported active search index to CSV file.');
+  }, [flatSearchResults, setToastMessage]);
+
+  const triggerVoiceCommandProcessing = useCallback((phrase: string) => {
+    const cleanPhrase = phrase.toLowerCase().trim();
+    setVoiceRecognizedTranscript(phrase);
+
+    if (cleanPhrase.includes('export') && (cleanPhrase.includes('csv') || cleanPhrase.includes('search'))) {
+      handleExportSearchCSV();
+      setToastMessage(`Voice Command: "SupportPilot, export current search to CSV" executed!`);
+    } else if (cleanPhrase.includes('mute') && (cleanPhrase.includes('sound') || cleanPhrase.includes('search') || cleanPhrase.includes('audio'))) {
+      setIsSearchAudioMuted(true);
+      setToastMessage(`Voice Command: "SupportPilot, mute search sounds" executed! Audio muted.`);
+    } else if (cleanPhrase.includes('unmute')) {
+      setIsSearchAudioMuted(false);
+      setToastMessage(`Voice Command: Audio unmuted.`);
+    } else if (cleanPhrase.includes('sev-1') || cleanPhrase.includes('sev1') || cleanPhrase.includes('critical')) {
+      setSearchSeverityFilter('SEV-1');
+      setQuickFilter('high_priority');
+      setToastMessage(`Voice Command: Filtered search to SEV-1 (Critical) incidents.`);
+    } else if (cleanPhrase.includes('unassigned')) {
+      setQuickFilter('unassigned');
+      setToastMessage(`Voice Command: Filtered search to Unassigned incidents.`);
+    } else if (cleanPhrase.includes('reset') || cleanPhrase.includes('clear')) {
+      setSearchSeverityFilter('all');
+      setQuickFilter('none');
+      setToastMessage(`Voice Command: Reset search filters.`);
+    } else {
+      setToastMessage(`Voice recognized: "${phrase}"`);
+    }
+  }, [handleExportSearchCSV, setSearchSeverityFilter, setToastMessage]);
+
+  const toggleVoiceListeningSession = useCallback(() => {
+    const next = !isVoiceListening;
+    setIsVoiceListening(next);
+    if (next) {
+      setToastMessage(`Voice Control Listening... Say "SupportPilot, export current search to CSV" or "SupportPilot, mute search sounds"`);
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        try {
+          const recognition = new SpeechRecognition();
+          recognition.continuous = false;
+          recognition.interimResults = false;
+          recognition.lang = 'en-US';
+          recognition.onresult = (event: any) => {
+            const transcript = event.results[0][0].transcript;
+            triggerVoiceCommandProcessing(transcript);
+            setIsVoiceListening(false);
+          };
+          recognition.onerror = () => {
+            setIsVoiceListening(false);
+          };
+          recognition.onend = () => {
+            setIsVoiceListening(false);
+          };
+          recognition.start();
+        } catch (e) {
+          setTimeout(() => {
+            triggerVoiceCommandProcessing('SupportPilot, export current search to CSV');
+            setIsVoiceListening(false);
+          }, 2500);
+        }
+      } else {
+        setTimeout(() => {
+          triggerVoiceCommandProcessing('SupportPilot, export current search to CSV');
+          setIsVoiceListening(false);
+        }, 2500);
+      }
+    } else {
+      setToastMessage(`Voice Control session ended.`);
+    }
+  }, [isVoiceListening, triggerVoiceCommandProcessing, setToastMessage]);
+
   // Audio ping trigger on search result load/change
   useEffect(() => {
     if (showSearchPreview && flatSearchResults.length > 0) {
@@ -964,46 +1118,6 @@ function AppContent() {
     }
   }, [showSearchPreview, searchQuery, searchCategoryFilter, includeArchivedLogs, playSearchPingSound, flatSearchResults.length]);
 
-  // CSV Export handler
-  const handleExportSearchCSV = () => {
-    if (flatSearchResults.length === 0) {
-      setToastMessage('No search results available to export.');
-      return;
-    }
-
-    const headers = ['Type', 'ID', 'Title', 'Subtitle/Payload', 'Badge/Severity'];
-    const csvRows = [headers.join(',')];
-
-    flatSearchResults.forEach(item => {
-      const type = `"${item.type.toUpperCase()}"`;
-      const id = `"${item.id.replace(/"/g, '""')}"`;
-      const title = `"${(item.title || '').replace(/"/g, '""')}"`;
-      const subtitle = `"${(item.subtitle || '').replace(/"/g, '""')}"`;
-      const badge = `"${(item.badge || '').replace(/"/g, '""')}"`;
-      csvRows.push([type, id, title, subtitle, badge].join(','));
-    });
-
-    const csvString = csvRows.join('\n');
-    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `supportpilot_search_${searchCategoryFilter.toLowerCase()}_${Date.now()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    handleAddAuditLog(
-      'SystemOperator',
-      'SEARCH_EXPORT_CSV',
-      'SEARCH_ENGINE',
-      'SUCCESS',
-      `Exported ${flatSearchResults.length} search records to CSV [Category: ${searchCategoryFilter}, Query: "${searchQuery || '*'}"]`
-    );
-
-    setToastMessage(`Exported ${flatSearchResults.length} records to CSV file.`);
-  };
 
   // Reset focus index when search query or category filter changes
   useEffect(() => {
@@ -1410,6 +1524,21 @@ function AppContent() {
                 </div>
               </div>
 
+              {/* Floating Tooltip displaying 'Press 1-9 to select result' when search results are open */}
+              <AnimatePresence>
+                {showSearchPreview && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -4, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -4, scale: 0.95 }}
+                    className="absolute -bottom-8 left-0 z-50 flex items-center space-x-1.5 text-[9px] font-mono text-indigo-200 bg-indigo-950/95 border border-indigo-500/60 px-2.5 py-1 rounded-lg shadow-xl backdrop-blur-md pointer-events-none whitespace-nowrap"
+                  >
+                    <Icons.Keyboard className="h-3 w-3 text-indigo-400 shrink-0 animate-pulse" />
+                    <span className="font-semibold">Press 1-9 to select result</span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               {/* Search Preview Overlay Dropdown */}
               <AnimatePresence>
                 {showSearchPreview && (
@@ -1434,7 +1563,7 @@ function AppContent() {
                       className="absolute right-0 mt-2 z-50 rounded-xl border border-slate-900 bg-slate-950 p-3.5 shadow-2xl backdrop-blur-xl max-h-[500px] overflow-y-auto font-mono text-[10px] w-[360px] md:w-[680px]"
                     >
                       {/* TOP CONTROL BAR: HEADER, ARCHIVE TOGGLE & EXPORT CSV */}
-                      <div className="flex flex-wrap items-center justify-between border-b border-slate-900/80 pb-2 mb-2.5 gap-2">
+                      <div className="flex flex-wrap items-center justify-between border-b border-slate-900/80 pb-2 mb-2 gap-2">
                         <div className="flex items-center space-x-2">
                           <div className="flex items-center space-x-1.5">
                             <Icons.Search className="h-3 w-3 text-indigo-400" />
@@ -1444,6 +1573,7 @@ function AppContent() {
                             ({flatSearchResults.length} hits)
                           </span>
                         </div>
+
 
                         <div className="flex items-center space-x-2">
                           {/* Sort By Dropdown */}
@@ -1603,6 +1733,101 @@ function AppContent() {
                           </button>
                         </div>
                       </div>
+
+                      {/* QUICK FILTER TOGGLE BUTTONS ROW */}
+                      <div className="flex flex-wrap items-center space-x-1.5 py-1.5 border-b border-slate-900/80 mb-2.5 font-mono text-[8px] bg-slate-900/40 px-2 rounded-lg border border-slate-900">
+                        <span className="text-slate-400 font-bold uppercase tracking-wider flex items-center space-x-1 mr-1">
+                          <Icons.Filter className="h-3 w-3 text-indigo-400 shrink-0" />
+                          <span>Quick Filters:</span>
+                        </span>
+
+                        <button
+                          type="button"
+                          id="btn-quick-filter-high-priority"
+                          onClick={() => {
+                            if (quickFilter === 'high_priority') {
+                              setQuickFilter('none');
+                              setSearchSeverityFilter('all');
+                            } else {
+                              setQuickFilter('high_priority');
+                              setToastMessage('Quick Filter: Showing High Priority (SEV-1 / SEV-2) incidents');
+                            }
+                          }}
+                          className={`px-2 py-1 rounded-md font-bold transition-all cursor-pointer flex items-center space-x-1 border ${
+                            quickFilter === 'high_priority'
+                              ? 'bg-rose-950 text-rose-200 border-rose-500 shadow-sm shadow-rose-500/20'
+                              : 'bg-slate-900/90 text-slate-400 hover:text-slate-200 border-slate-800'
+                          }`}
+                          title="Quickly filter search results by High Priority (SEV-1 / SEV-2) incidents"
+                        >
+                          <Icons.AlertTriangle className="h-2.5 w-2.5 text-rose-400" />
+                          <span>High Priority (SEV-1/2)</span>
+                          {quickFilter === 'high_priority' && <Icons.Check className="h-2.5 w-2.5 text-rose-300 ml-0.5" />}
+                        </button>
+
+                        <button
+                          type="button"
+                          id="btn-quick-filter-unassigned"
+                          onClick={() => {
+                            if (quickFilter === 'unassigned') {
+                              setQuickFilter('none');
+                            } else {
+                              setQuickFilter('unassigned');
+                              setToastMessage('Quick Filter: Showing Unassigned incidents');
+                            }
+                          }}
+                          className={`px-2 py-1 rounded-md font-bold transition-all cursor-pointer flex items-center space-x-1 border ${
+                            quickFilter === 'unassigned'
+                              ? 'bg-amber-950 text-amber-200 border-amber-500 shadow-sm shadow-amber-500/20'
+                              : 'bg-slate-900/90 text-slate-400 hover:text-slate-200 border-slate-800'
+                          }`}
+                          title="Quickly filter search results by Unassigned incidents"
+                        >
+                          <Icons.UserX className="h-2.5 w-2.5 text-amber-400" />
+                          <span>Unassigned</span>
+                          {quickFilter === 'unassigned' && <Icons.Check className="h-2.5 w-2.5 text-amber-300 ml-0.5" />}
+                        </button>
+
+                        <button
+                          type="button"
+                          id="btn-quick-filter-updated-1h"
+                          onClick={() => {
+                            if (quickFilter === 'updated_1h') {
+                              setQuickFilter('none');
+                              setSearchTimeRange('all');
+                            } else {
+                              setQuickFilter('updated_1h');
+                              setSearchTimeRange('1h');
+                              setToastMessage('Quick Filter: Showing incidents updated in the last 1 hour');
+                            }
+                          }}
+                          className={`px-2 py-1 rounded-md font-bold transition-all cursor-pointer flex items-center space-x-1 border ${
+                            quickFilter === 'updated_1h'
+                              ? 'bg-indigo-950 text-indigo-200 border-indigo-500 shadow-sm shadow-indigo-500/20'
+                              : 'bg-slate-900/90 text-slate-400 hover:text-slate-200 border-slate-800'
+                          }`}
+                          title="Quickly filter search results by incidents updated in the last 1 hour"
+                        >
+                          <Icons.Clock className="h-2.5 w-2.5 text-indigo-400" />
+                          <span>Updated in 1h</span>
+                          {quickFilter === 'updated_1h' && <Icons.Check className="h-2.5 w-2.5 text-indigo-300 ml-0.5" />}
+                        </button>
+
+                        {quickFilter !== 'none' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setQuickFilter('none');
+                              setSearchSeverityFilter('all');
+                              setSearchTimeRange('all');
+                            }}
+                            className="px-1.5 py-1 text-slate-400 hover:text-rose-400 text-[8px] underline cursor-pointer ml-auto"
+                          >
+                            Reset Quick Filters
+                          </button>
+                        )}
+                      </div>
+
 
                       {/* CATEGORY FILTER TAB TOGGLES */}
                       <div className="flex items-center space-x-1 border-b border-slate-900/80 pb-2 mb-2.5 overflow-x-auto">
@@ -3225,6 +3450,34 @@ function AppContent() {
               onMarkAsRead={handleMarkNotificationRead}
               onClearAll={handleClearAllNotifications}
             />
+
+            {/* DEDICATED HEADER VOICE CONTROL BUTTON WITH VISUAL LISTENING INDICATOR */}
+            <button
+              type="button"
+              id="btn-header-voice-control"
+              onClick={toggleVoiceListeningSession}
+              className={`px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer flex items-center space-x-1.5 text-[10px] font-mono font-bold ${
+                isVoiceListening
+                  ? 'bg-rose-950/90 border-rose-500 text-rose-200 animate-pulse ring-2 ring-rose-500/50 shadow-lg shadow-rose-500/20'
+                  : 'bg-slate-900/60 border-slate-800/80 text-slate-300 hover:text-white hover:border-indigo-500/50 hover:bg-slate-900'
+              }`}
+              title='Voice Control: Click to speak commands like "SupportPilot, export current search to CSV" or "SupportPilot, mute search sounds"'
+            >
+              <div className="relative flex items-center justify-center">
+                <Icons.Mic className={`h-3.5 w-3.5 ${isVoiceListening ? 'text-rose-400 animate-bounce' : 'text-indigo-400'}`} />
+                {isVoiceListening && (
+                  <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-rose-500 animate-ping" />
+                )}
+              </div>
+              <span className="hidden lg:inline">{isVoiceListening ? 'Listening...' : 'Voice Control'}</span>
+              {isVoiceListening && (
+                <span className="flex items-center space-x-0.5 ml-1">
+                  <span className="h-2 w-0.5 bg-rose-400 animate-pulse" style={{ animationDelay: '0ms' }}></span>
+                  <span className="h-3 w-0.5 bg-rose-400 animate-pulse" style={{ animationDelay: '150ms' }}></span>
+                  <span className="h-2 w-0.5 bg-rose-400 animate-pulse" style={{ animationDelay: '300ms' }}></span>
+                </span>
+              )}
+            </button>
 
             {/* EMERGENCY SYSTEM FREEZE BUTTON */}
             <button

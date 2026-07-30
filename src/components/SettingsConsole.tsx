@@ -248,7 +248,7 @@ export default function SettingsConsole({
             Select your preferred interface layout density. Compact increases information density for expert operations. Spacious provides generous breathing room.
           </p>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <button
               onClick={() => setUiDensity('compact')}
               className={`flex items-center space-x-2 rounded-lg p-2.5 border transition-all cursor-pointer ${
@@ -258,7 +258,19 @@ export default function SettingsConsole({
               }`}
             >
               <Icons.Menu className="h-3.5 w-3.5 text-slate-400" />
-              <span className="text-xxs">Compact (High Info)</span>
+              <span className="text-xxs">Compact</span>
+            </button>
+
+            <button
+              onClick={() => setUiDensity('standard')}
+              className={`flex items-center space-x-2 rounded-lg p-2.5 border transition-all cursor-pointer ${
+                uiDensity === 'standard'
+                  ? 'bg-indigo-600/20 border-indigo-500/80 text-white font-bold'
+                  : 'bg-slate-900/50 border-slate-800/80 text-slate-400 hover:bg-slate-800/30'
+              }`}
+            >
+              <Icons.Layout className="h-3.5 w-3.5 text-slate-400" />
+              <span className="text-xxs">Standard</span>
             </button>
 
             <button
@@ -270,7 +282,7 @@ export default function SettingsConsole({
               }`}
             >
               <Icons.LayoutList className="h-3.5 w-3.5 text-slate-400" />
-              <span className="text-xxs">Spacious (Readable)</span>
+              <span className="text-xxs">Spacious</span>
             </button>
           </div>
         </div>

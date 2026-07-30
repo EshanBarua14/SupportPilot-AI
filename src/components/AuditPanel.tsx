@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ProjectMasterIndex } from '../MasterIndex';
 import { AuditLogEntry } from '../types';
 import * as Icons from 'lucide-react';
+import { jsPDF } from 'jspdf';
 
 interface AuditPanelProps {
   auditLogs: AuditLogEntry[];
@@ -70,45 +71,77 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
     setSortOrder('desc');
   };
 
-  const handleDownloadCSV = () => {
-    const headers = ['ID', 'Timestamp', 'Operator', 'Module', 'Action', 'Status', 'Payload'];
-    const rows = filteredLogs.map(log => [
-      log.id,
-      log.timestamp,
-      log.operator,
-      log.module,
-      log.action,
-      log.status,
-      `"${log.payload.replace(/"/g, '""')}"`
-    ]);
-    
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.join(','))
-    ].join('\n');
+  // Selected Audit Logs State for Multi-Select Export
+  const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
+  const [exportFormat, setExportFormat] = useState<'csv' | 'json'>('csv');
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `supportpilot_audit_export_${new Date().toISOString().slice(0, 10)}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const toggleSelectLog = (id: string) => {
+    setSelectedLogIds(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
   };
 
-  const handleDownloadJSON = () => {
-    const jsonContent = JSON.stringify(filteredLogs, null, 2);
-    const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `supportpilot_audit_export_${new Date().toISOString().slice(0, 10)}.json`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const toggleSelectAllFiltered = () => {
+    const allFilteredIds = filteredLogs.map(l => l.id);
+    const isAllSelected = allFilteredIds.every(id => selectedLogIds.includes(id));
+    if (isAllSelected) {
+      setSelectedLogIds(prev => prev.filter(id => !allFilteredIds.includes(id)));
+    } else {
+      setSelectedLogIds(prev => Array.from(new Set([...prev, ...allFilteredIds])));
+    }
+  };
+
+  const handleDownloadSelection = (formatOverride?: 'csv' | 'json') => {
+    const logsToExport = selectedLogIds.length > 0
+      ? filteredLogs.filter(l => selectedLogIds.includes(l.id))
+      : filteredLogs;
+
+    const chosenFormat = formatOverride || exportFormat;
+
+    if (logsToExport.length === 0) return;
+
+    if (chosenFormat === 'csv') {
+      const headers = ['ID', 'Timestamp', 'Operator', 'Module', 'Action', 'Status', 'Payload'];
+      const rows = logsToExport.map(log => [
+        log.id,
+        log.timestamp,
+        log.operator,
+        log.module,
+        log.action,
+        log.status,
+        `"${log.payload.replace(/"/g, '""')}"`
+      ]);
+      
+      const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.join(','))
+      ].join('\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `supportpilot_selected_audit_export_${new Date().toISOString().slice(0, 10)}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else {
+      const jsonContent = JSON.stringify(logsToExport, null, 2);
+      const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `supportpilot_selected_audit_export_${new Date().toISOString().slice(0, 10)}.json`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `Exported ${logsToExport.length} audit logs as ${chosenFormat.toUpperCase()}.` }
+    }));
   };
 
   return (
@@ -165,25 +198,31 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
                   <span>Interactive Audit Query Filters</span>
                 </span>
                 <div className="flex items-center space-x-2">
+                  {/* Dedicated Download Selection Button */}
                   <button
-                    onClick={handleDownloadCSV}
-                    className="text-emerald-400 hover:text-emerald-300 text-[10px] font-mono font-bold flex items-center space-x-1 border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1 rounded-md cursor-pointer transition-colors animate-fadeIn"
-                    title="Export current query to CSV"
+                    type="button"
+                    onClick={() => handleDownloadSelection('csv')}
+                    className="text-emerald-400 hover:text-emerald-300 text-[10px] font-mono font-bold flex items-center space-x-1.5 border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 px-3 py-1.5 rounded-lg cursor-pointer transition-all shadow-sm"
+                    title="Download selected audit logs as CSV"
                   >
-                    <Icons.Download className="h-3 w-3" />
-                    <span>CSV</span>
+                    <Icons.Download className="h-3.5 w-3.5" />
+                    <span>Download Selection ({selectedLogIds.length > 0 ? selectedLogIds.length : 'All'}) CSV</span>
                   </button>
+
                   <button
-                    onClick={handleDownloadJSON}
-                    className="text-indigo-400 hover:text-indigo-300 text-[10px] font-mono font-bold flex items-center space-x-1 border border-indigo-500/20 bg-indigo-500/5 px-2.5 py-1 rounded-md cursor-pointer transition-colors animate-fadeIn"
-                    title="Export current query to JSON"
+                    type="button"
+                    onClick={() => handleDownloadSelection('json')}
+                    className="text-indigo-400 hover:text-indigo-300 text-[10px] font-mono font-bold flex items-center space-x-1.5 border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 px-3 py-1.5 rounded-lg cursor-pointer transition-all shadow-sm"
+                    title="Download selected audit logs as JSON"
                   >
-                    <Icons.Download className="h-3 w-3" />
-                    <span>JSON</span>
+                    <Icons.FileJson className="h-3.5 w-3.5" />
+                    <span>Download Selection ({selectedLogIds.length > 0 ? selectedLogIds.length : 'All'}) JSON</span>
                   </button>
+
                   <button
+                    type="button"
                     onClick={clearFilters}
-                    className="text-slate-500 hover:text-white text-[10px] font-mono flex items-center space-x-1 pl-1"
+                    className="text-slate-500 hover:text-white text-[10px] font-mono flex items-center space-x-1 pl-1 cursor-pointer"
                   >
                     <Icons.RotateCcw className="h-3 w-3" />
                     <span>Reset</span>
@@ -292,6 +331,15 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
               <table className="w-full text-left font-mono text-[10px]">
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-950/60 text-slate-400 uppercase tracking-wider text-xxs">
+                    <th className="px-3 py-2.5 w-8">
+                      <input
+                        type="checkbox"
+                        checked={filteredLogs.length > 0 && filteredLogs.every(l => selectedLogIds.includes(l.id))}
+                        onChange={toggleSelectAllFiltered}
+                        className="rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-indigo-500/30 cursor-pointer h-3.5 w-3.5"
+                        title="Select/Deselect All Filtered Logs"
+                      />
+                    </th>
                     <th className="px-4 py-2.5">Timestamp</th>
                     <th className="px-4 py-2.5">Operator</th>
                     <th className="px-4 py-2.5">Module</th>
@@ -301,27 +349,41 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {filteredLogs.map((log) => (
-                    <tr key={log.id} className="hover:bg-slate-900/40">
-                      <td className="px-4 py-3 text-slate-500 shrink-0 whitespace-nowrap">{log.timestamp.slice(0, 19).replace('T', ' ')}</td>
-                      <td className="px-4 py-3 text-indigo-300 font-semibold">{log.operator}</td>
-                      <td className="px-4 py-3 text-slate-400">{log.module}</td>
-                      <td className="px-4 py-3 text-white font-bold">{log.action}</td>
-                      <td className="px-4 py-3">
-                        <span className={`rounded-full px-2 py-0.5 font-bold ${
-                          log.status === 'SUCCESS' 
-                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                            : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                        }`}>
-                          {log.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-300 text-xxs max-w-sm leading-relaxed">{log.payload}</td>
-                    </tr>
-                  ))}
+                  {filteredLogs.map((log) => {
+                    const isSelected = selectedLogIds.includes(log.id);
+                    return (
+                      <tr 
+                        key={log.id} 
+                        className={`transition-colors ${isSelected ? 'bg-indigo-950/20 hover:bg-indigo-900/30' : 'hover:bg-slate-900/40'}`}
+                      >
+                        <td className="px-3 py-3">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelectLog(log.id)}
+                            className="rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-indigo-500/30 cursor-pointer h-3.5 w-3.5"
+                          />
+                        </td>
+                        <td className="px-4 py-3 text-slate-500 shrink-0 whitespace-nowrap">{log.timestamp.slice(0, 19).replace('T', ' ')}</td>
+                        <td className="px-4 py-3 text-indigo-300 font-semibold">{log.operator}</td>
+                        <td className="px-4 py-3 text-slate-400">{log.module}</td>
+                        <td className="px-4 py-3 text-white font-bold">{log.action}</td>
+                        <td className="px-4 py-3">
+                          <span className={`rounded-full px-2 py-0.5 font-bold ${
+                            log.status === 'SUCCESS' 
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                              : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                          }`}>
+                            {log.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-300 text-xxs max-w-sm leading-relaxed">{log.payload}</td>
+                      </tr>
+                    );
+                  })}
                   {filteredLogs.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="text-center py-8 text-slate-500 font-sans">
+                      <td colSpan={7} className="text-center py-8 text-slate-500 font-sans">
                         No audit log entries matched the specified query parameters. Clear filters to start over.
                       </td>
                     </tr>

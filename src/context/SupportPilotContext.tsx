@@ -53,8 +53,8 @@ export interface SupportPilotContextType {
   theme: string;
   setTheme: (theme: string) => void;
   handleSetTheme: (newTheme: string) => void;
-  uiDensity: 'compact' | 'spacious';
-  setUiDensity: (density: 'compact' | 'spacious') => void;
+  uiDensity: 'compact' | 'standard' | 'spacious';
+  setUiDensity: (density: 'compact' | 'standard' | 'spacious') => void;
   notifications: SystemNotification[];
   setNotifications: React.Dispatch<React.SetStateAction<SystemNotification[]>>;
   handleMarkAllNotificationsRead: () => void;
@@ -140,12 +140,17 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
   // Security Lock & Authentication Session State
   const [currentUser, setCurrentUser] = useState<AuthUser>(() => {
     const saved = localStorage.getItem('supportpilot_current_user');
+    const savedToken = localStorage.getItem('supportpilot_session_token');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (savedToken) {
+          parsed.sessionToken = savedToken;
+        }
+        return parsed;
       } catch (e) {}
     }
-    return {
+    const defaultUser: AuthUser = {
       id: 'usr_cto_01',
       name: 'Eshan Barua (CTO)',
       email: 'eshanbaruabarua@gmail.com',
@@ -155,16 +160,30 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
       phone: '+1 (555) 019-2834',
       is2FAEnabled: true,
       authMethod: 'google',
+      sessionToken: 'sp_sess_init_cto_2026',
     };
+    localStorage.setItem('supportpilot_session_token', defaultUser.sessionToken!);
+    localStorage.setItem('supportpilot_current_user', JSON.stringify(defaultUser));
+    return defaultUser;
   });
 
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
-  const [isLocked, setIsLocked] = useState<boolean>(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(() => {
+    // If explicitly logged out (no session token), open auth modal on load
+    return !localStorage.getItem('supportpilot_session_token');
+  });
+
+  const [isLocked, setIsLocked] = useState<boolean>(() => {
+    return !localStorage.getItem('supportpilot_session_token');
+  });
+
   const [secondsRemaining, setSecondsRemaining] = useState<number>(900); // 15 mins = 900s
   const [themeSuggestion, setThemeSuggestion] = useState<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem('supportpilot_current_user', JSON.stringify(currentUser));
+    if (currentUser.sessionToken) {
+      localStorage.setItem('supportpilot_session_token', currentUser.sessionToken);
+    }
   }, [currentUser]);
 
   // Audit addition helper
@@ -188,30 +207,38 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
   }, []);
 
   const handleLogout = useCallback(() => {
+    localStorage.removeItem('supportpilot_session_token');
+    setCurrentUser((prev) => ({ ...prev, sessionToken: undefined }));
     setIsAuthModalOpen(true);
     setIsLocked(true);
-    setToastMessage(`Operator session for ${currentUser.name} signed out. Secure login required.`);
+    setToastMessage(`Operator session for ${currentUser.name} signed out. Session token invalidated.`);
     handleAddAuditLog(
       currentUser.name,
       'USER_LOGOUT',
       'Authentication Engine',
       'SUCCESS',
-      `Signed out user session (${currentUser.email}). Operational console locked.`
+      `Signed out user session (${currentUser.email}). Session token purged from localStorage.`
     );
   }, [currentUser, handleAddAuditLog]);
 
   const handleLoginSuccess = useCallback((user: AuthUser, authMethod: 'password' | 'google' | 'phone_otp' | 'sso') => {
-    setCurrentUser(user);
+    const token = user.sessionToken || `sp_sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const userWithToken = { ...user, sessionToken: token, authMethod };
+    
+    localStorage.setItem('supportpilot_session_token', token);
+    localStorage.setItem('supportpilot_current_user', JSON.stringify(userWithToken));
+    
+    setCurrentUser(userWithToken);
     setIsAuthModalOpen(false);
     setIsLocked(false);
     setSecondsRemaining(900);
-    setToastMessage(`Welcome back, ${user.name}! Authenticated via ${authMethod.toUpperCase()}.`);
+    setToastMessage(`Welcome back, ${user.name}! Authenticated via ${authMethod.toUpperCase()}. Session token active.`);
     handleAddAuditLog(
       user.name,
       'SESSION_AUTHENTICATED',
       'Authentication Engine',
       'SUCCESS',
-      `Session authorized for ${user.email} (${user.role}) via ${authMethod.toUpperCase()}.`
+      `Session authorized for ${user.email} (${user.role}) via ${authMethod.toUpperCase()}. Persistent token stored.`
     );
   }, [handleAddAuditLog]);
 
@@ -255,11 +282,11 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
   });
 
   // UI Density state and synchronizer
-  const [uiDensity, setUiDensity] = useState<'compact' | 'spacious'>(() => {
-    return (localStorage.getItem('supportpilot_uidensity') as 'compact' | 'spacious') || 'compact';
+  const [uiDensity, setUiDensity] = useState<'compact' | 'standard' | 'spacious'>(() => {
+    return (localStorage.getItem('supportpilot_uidensity') as 'compact' | 'standard' | 'spacious') || 'standard';
   });
 
-  const handleSetUiDensity = useCallback((newDensity: 'compact' | 'spacious') => {
+  const handleSetUiDensity = useCallback((newDensity: 'compact' | 'standard' | 'spacious') => {
     localStorage.setItem('supportpilot_uidensity', newDensity);
     setUiDensity(newDensity);
     handleAddAuditLog(

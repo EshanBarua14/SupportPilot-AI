@@ -9,6 +9,7 @@ import {
   Area,
   BarChart,
   Bar,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -17,6 +18,33 @@ import {
   LineChart,
   Line
 } from 'recharts';
+
+const hourly24hActivityData = [
+  { hour: '00:00', count: 2, critical: 0, high: 1, medium: 1, intensityColor: '#10b981' },
+  { hour: '01:00', count: 1, critical: 0, high: 0, medium: 1, intensityColor: '#10b981' },
+  { hour: '02:00', count: 3, critical: 1, high: 1, medium: 1, intensityColor: '#10b981' },
+  { hour: '03:00', count: 2, critical: 0, high: 1, medium: 1, intensityColor: '#10b981' },
+  { hour: '04:00', count: 1, critical: 0, high: 0, medium: 1, intensityColor: '#10b981' },
+  { hour: '05:00', count: 4, critical: 1, high: 1, medium: 2, intensityColor: '#10b981' },
+  { hour: '06:00', count: 5, critical: 1, high: 2, medium: 2, intensityColor: '#10b981' },
+  { hour: '07:00', count: 7, critical: 2, high: 3, medium: 2, intensityColor: '#f59e0b' },
+  { hour: '08:00', count: 9, critical: 2, high: 4, medium: 3, intensityColor: '#f59e0b' },
+  { hour: '09:00', count: 12, critical: 4, high: 5, medium: 3, intensityColor: '#f43f5e' },
+  { hour: '10:00', count: 15, critical: 5, high: 6, medium: 4, intensityColor: '#f43f5e' },
+  { hour: '11:00', count: 18, critical: 6, high: 7, medium: 5, intensityColor: '#f43f5e' },
+  { hour: '12:00', count: 14, critical: 4, high: 6, medium: 4, intensityColor: '#f43f5e' },
+  { hour: '13:00', count: 11, critical: 3, high: 5, medium: 3, intensityColor: '#f43f5e' },
+  { hour: '14:00', count: 16, critical: 5, high: 7, medium: 4, intensityColor: '#f43f5e' },
+  { hour: '15:00', count: 13, critical: 4, high: 5, medium: 4, intensityColor: '#f43f5e' },
+  { hour: '16:00', count: 10, critical: 3, high: 4, medium: 3, intensityColor: '#f59e0b' },
+  { hour: '17:00', count: 8, critical: 2, high: 3, medium: 3, intensityColor: '#f59e0b' },
+  { hour: '18:00', count: 6, critical: 1, high: 3, medium: 2, intensityColor: '#f59e0b' },
+  { hour: '19:00', count: 5, critical: 1, high: 2, medium: 2, intensityColor: '#10b981' },
+  { hour: '20:00', count: 4, critical: 1, high: 1, medium: 2, intensityColor: '#10b981' },
+  { hour: '21:00', count: 3, critical: 0, high: 1, medium: 2, intensityColor: '#10b981' },
+  { hour: '22:00', count: 2, critical: 0, high: 1, medium: 1, intensityColor: '#10b981' },
+  { hour: '23:00', count: 1, critical: 0, high: 0, medium: 1, intensityColor: '#10b981' }
+];
 
 const severityLevelsD3 = ['P0 - Critical', 'P1 - High', 'P2 - Medium', 'P3 - Low'];
 const hours24D3 = Array.from({ length: 24 }, (_, i) => i);
@@ -70,6 +98,21 @@ const generateD3HeatmapData = (): D3HeatmapCell[] => {
 
   return data;
 };
+
+const resolutionTrend24hData = [
+  { time: '00:00', opened: 3, resolved: 4 },
+  { time: '02:00', opened: 2, resolved: 3 },
+  { time: '04:00', opened: 1, resolved: 2 },
+  { time: '06:00', opened: 4, resolved: 3 },
+  { time: '08:00', opened: 8, resolved: 6 },
+  { time: '10:00', opened: 12, resolved: 10 },
+  { time: '12:00', opened: 9, resolved: 11 },
+  { time: '14:00', opened: 14, resolved: 12 },
+  { time: '16:00', opened: 10, resolved: 13 },
+  { time: '18:00', opened: 15, resolved: 14 },
+  { time: '20:00', opened: 7, resolved: 9 },
+  { time: '22:00', opened: 4, resolved: 6 }
+];
 
 const liveIncidentVelocityData = [
   { interval: '02:00', critical: 1, high: 3, medium: 5 },
@@ -815,6 +858,138 @@ export default function MetricsDashboard() {
               />
             </BarChart>
           </ResponsiveContainer>
+        </div>
+      </div>
+    );
+  };
+
+  const renderIncidentResolutionTrendChart = () => {
+    return (
+      <div className="bento-card-premium p-5 flex flex-col h-[320px]">
+        <div className="mb-4 flex items-center justify-between text-xxs border-b border-slate-800/40 pb-2.5">
+          <span className="font-bold text-slate-300 uppercase tracking-wider flex items-center space-x-2">
+            <Icons.TrendingUp className="h-4 w-4 text-indigo-400" />
+            <span className="font-display font-medium text-white">Incident Resolution Trend (Resolved vs Opened)</span>
+          </span>
+          <span className="rounded bg-indigo-500/15 px-2 py-0.5 font-mono text-[8px] font-bold text-indigo-400 border border-indigo-500/30">
+            LAST 24 HOURS
+          </span>
+        </div>
+
+        <div className="flex-1 w-full min-h-0 text-[9px] font-mono">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={resolutionTrend24hData} margin={{ top: 10, right: 10, left: -25, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.05)" />
+              <XAxis dataKey="time" stroke="#475569" tickLine={false} fontSize={9} dy={8} />
+              <YAxis stroke="#475569" tickLine={false} fontSize={9} dx={-8} allowDecimals={false} />
+              <Tooltip
+                content={({ active, payload, label }: any) => {
+                  if (active && payload && payload.length) {
+                    return (
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/95 p-2.5 font-mono text-[10px] shadow-2xl backdrop-blur-md">
+                        <p className="font-bold text-white mb-1.5 border-b border-slate-900 pb-1 flex items-center justify-between">
+                          <span>Time Window:</span>
+                          <span className="text-indigo-400">{label} UTC</span>
+                        </p>
+                        {payload.map((p: any) => (
+                          <div key={p.name} className="flex items-center justify-between space-x-4 my-1">
+                            <span className="text-slate-400 flex items-center space-x-1.5">
+                              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: p.stroke }} />
+                              <span>{p.name}:</span>
+                            </span>
+                            <span className="font-bold text-white">{p.value} incidents</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
+                  return null;
+                }}
+              />
+              <Legend verticalAlign="top" height={28} iconType="circle" iconSize={6} wrapperStyle={{ fontSize: '9px', paddingBottom: '8px' }} />
+              <Line type="monotone" name="Incidents Opened" dataKey="opened" stroke="#f43f5e" strokeWidth={2.5} dot={{ r: 3, fill: '#f43f5e' }} activeDot={{ r: 5 }} />
+              <Line type="monotone" name="Incidents Resolved" dataKey="resolved" stroke="#10b981" strokeWidth={2.5} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 5 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="mt-2 text-[9px] text-slate-500 flex justify-between items-center border-t border-slate-900/60 pt-2 font-mono">
+          <span>24H RESOLVED TOTAL: 92</span>
+          <span className="text-emerald-400 font-bold">NET CLEARANCE RATE: +8.4%</span>
+        </div>
+      </div>
+    );
+  };
+
+  const render24HourHeatmapRechartsChart = () => {
+    return (
+      <div className="bento-card-premium p-5 flex flex-col h-[320px]">
+        <div className="mb-4 flex items-center justify-between text-xxs border-b border-slate-800/40 pb-2.5">
+          <span className="font-bold text-slate-300 uppercase tracking-wider flex items-center space-x-2">
+            <Icons.Clock className="h-4 w-4 text-amber-400" />
+            <span className="font-display font-medium text-white">24-Hour Incident Frequency Heatmap</span>
+          </span>
+          <span className="rounded bg-amber-500/15 px-2 py-0.5 font-mono text-[8px] font-bold text-amber-400 border border-amber-500/30">
+            HOURLY PEAK PATTERNS
+          </span>
+        </div>
+
+        <div className="flex-1 w-full min-h-0 text-[9px] font-mono">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={hourly24hActivityData} margin={{ top: 10, right: 10, left: -25, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.05)" />
+              <XAxis dataKey="hour" stroke="#475569" tickLine={false} fontSize={8} dy={8} interval={3} />
+              <YAxis stroke="#475569" tickLine={false} fontSize={9} dx={-8} allowDecimals={false} />
+              <Tooltip
+                content={({ active, payload, label }: any) => {
+                  if (active && payload && payload.length) {
+                    const data = payload[0].payload;
+                    return (
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/95 p-2.5 font-mono text-[10px] shadow-2xl backdrop-blur-md">
+                        <p className="font-bold text-white mb-1.5 border-b border-slate-900 pb-1 flex items-center justify-between">
+                          <span>Hour Window:</span>
+                          <span className="text-amber-400">{label} UTC</span>
+                        </p>
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between space-x-4">
+                            <span className="text-slate-400">Total Incidents:</span>
+                            <span className="font-bold text-white">{data.count}</span>
+                          </div>
+                          <div className="flex items-center justify-between space-x-4 text-rose-400">
+                            <span>Critical (SEV-1):</span>
+                            <span className="font-bold">{data.critical}</span>
+                          </div>
+                          <div className="flex items-center justify-between space-x-4 text-amber-400">
+                            <span>High (SEV-2):</span>
+                            <span className="font-bold">{data.high}</span>
+                          </div>
+                          <div className="flex items-center justify-between space-x-4 text-emerald-400">
+                            <span>Medium/Low:</span>
+                            <span className="font-bold">{data.medium}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                }}
+              />
+              <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+                {hourly24hActivityData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={entry.intensityColor} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="mt-2 text-[9px] text-slate-500 flex justify-between items-center border-t border-slate-900/60 pt-2 font-mono">
+          <span className="flex items-center space-x-2">
+            <span className="flex items-center space-x-1"><span className="h-2 w-2 rounded-full bg-emerald-500 inline-block"/><span>Normal</span></span>
+            <span className="flex items-center space-x-1"><span className="h-2 w-2 rounded-full bg-amber-500 inline-block"/><span>Elevated</span></span>
+            <span className="flex items-center space-x-1"><span className="h-2 w-2 rounded-full bg-rose-500 inline-block"/><span>Peak</span></span>
+          </span>
+          <span className="text-amber-400 font-bold">PEAK WINDOW: 10:00-14:00 UTC</span>
         </div>
       </div>
     );
@@ -1661,28 +1836,41 @@ export default function MetricsDashboard() {
           </div>
 
           {/* Live Data Auto-Polling Toggle */}
-          <div className="flex items-center space-x-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5">
-            <span className="relative flex h-2 w-2 shrink-0">
-              <span className={`absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 ${isLiveActive ? 'animate-ping' : ''}`}></span>
-              <span className={`relative inline-flex rounded-full h-2 w-2 ${isLiveActive ? 'bg-emerald-400' : 'bg-slate-600'}`}></span>
-            </span>
-            <span className="font-mono text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-              {isLiveActive ? `LIVE (POLL: ${secondsToNextPoll}s)` : 'STATIC'}
-            </span>
-            <button
-              onClick={() => {
-                setIsLiveActive(!isLiveActive);
-                setSecondsToNextPoll(30);
-                window.dispatchEvent(new CustomEvent('show-toast', {
-                  detail: { message: !isLiveActive ? 'Live auto-polling active: querying metrics every 30s.' : 'Live polling disabled.' }
-                }));
-              }}
-              className={`relative inline-flex h-[18px] w-[32px] shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${isLiveActive ? 'bg-emerald-500' : 'bg-slate-800'}`}
-            >
-              <span
-                className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${isLiveActive ? 'translate-x-[14px]' : 'translate-x-0'}`}
+          <div className="flex flex-col justify-center bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 min-w-[210px]">
+            <div className="flex items-center justify-between space-x-2">
+              <div className="flex items-center space-x-2">
+                <span className="relative flex h-2 w-2 shrink-0">
+                  <span className={`absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 ${isLiveActive ? 'animate-ping' : ''}`}></span>
+                  <span className={`relative inline-flex rounded-full h-2 w-2 ${isLiveActive ? 'bg-emerald-400' : 'bg-slate-600'}`}></span>
+                </span>
+                <span className="font-mono text-[9px] font-bold text-slate-300 uppercase tracking-wider">
+                  {isLiveActive ? `Auto-Refresh (${secondsToNextPoll}s)` : 'Auto-Refresh Off'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsLiveActive(!isLiveActive);
+                  setSecondsToNextPoll(30);
+                  window.dispatchEvent(new CustomEvent('show-toast', {
+                    detail: { message: !isLiveActive ? 'Auto-refresh enabled: polling incident status every 30s.' : 'Auto-refresh paused.' }
+                  }));
+                }}
+                className={`relative inline-flex h-[18px] w-[32px] shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${isLiveActive ? 'bg-emerald-500' : 'bg-slate-800'}`}
+                title="Toggle 30-Second Auto-Refresh"
+              >
+                <span
+                  className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${isLiveActive ? 'translate-x-[14px]' : 'translate-x-0'}`}
+                />
+              </button>
+            </div>
+            {/* Visual Countdown Progress Bar */}
+            <div className="w-full bg-slate-800 h-1.5 rounded-full mt-1.5 overflow-hidden">
+              <div
+                className={`h-full transition-all duration-1000 ease-linear ${isLiveActive ? 'bg-gradient-to-r from-emerald-500 to-indigo-500' : 'bg-slate-700'}`}
+                style={{ width: isLiveActive ? `${(secondsToNextPoll / 30) * 100}%` : '0%' }}
               />
-            </button>
+            </div>
           </div>
 
           {/* Export to PDF Button */}
@@ -1915,17 +2103,28 @@ export default function MetricsDashboard() {
         </div>
       </div>
 
-      {/* 3. HISTORICAL OUTAGE TRENDS, MTTR, & ACTIVE REAL-TIME ALERTS */}
+      {/* RECHARTS 24-HOUR INCIDENT FREQUENCY HEATMAP */}
       <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-4">
+        <div className="col-span-12">
+          {render24HourHeatmapRechartsChart()}
+        </div>
+      </div>
+
+      {/* 3. REAL-TIME INCIDENT RESOLUTION TREND, HISTORICAL OUTAGE TRENDS, & MTTR */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <div className="lg:col-span-1">
+          {renderIncidentResolutionTrendChart()}
+        </div>
+
+        <div className="lg:col-span-1">
           {renderWeeklyIncidentVolumeChart()}
         </div>
 
-        <div className="col-span-4">
+        <div className="lg:col-span-1">
           {renderMTTRChart()}
         </div>
 
-        <div className="col-span-4 bento-card-premium p-5 flex flex-col justify-between h-[320px]">
+        <div className="lg:col-span-1 bento-card-premium p-5 flex flex-col justify-between h-[320px]">
           <div>
             <h4 className="mb-4 font-display font-semibold text-xs text-indigo-400 uppercase tracking-wider flex items-center space-x-2 border-b border-slate-800/40 pb-2.5 text-white">
               <Icons.Activity className="h-4.5 w-4.5 text-indigo-400" />

@@ -309,3 +309,71 @@ body {
   }
 }
 
+/* Accessibility High-Contrast Focus Indicators for Keyboard Navigation */
+.incident-workspace button:focus-visible,
+.incident-workspace input:focus-visible,
+.incident-workspace select:focus-visible,
+.incident-workspace textarea:focus-visible,
+.incident-workspace [role="button"]:focus-visible,
+.incident-workspace a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none !important;
+  box-shadow: 0 0 0 2px #6366f1 !important; /* ring-2 ring-indigo-500 */
+  border-radius: 6px;
+}
+
+/* Print-Friendly Styles for Incident Reports */
+@media print {
+  body, html {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: system-ui, -apple-system, sans-serif !important;
+  }
+
+  /* Hide navigation bars, sidebars, header controls, search inputs, voice buttons, and modals */
+  aside,
+  header,
+  nav,
+  .no-print,
+  #voice-control-header-btn,
+  #unified-search-input,
+  button:not(.print-preserve),
+  .fixed,
+  [role="dialog"] {
+    display: none !important;
+  }
+
+  /* Expand main incident workspace for clean paper printing */
+  main,
+  .incident-workspace,
+  .print-area {
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 12px !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  h1, h2, h3, h4, h5, h6, p, span, td, th, div {
+    color: #000000 !important;
+    text-shadow: none !important;
+  }
+
+  /* Ensure cards break cleanly across paper pages */
+  .bento-card-premium,
+  .incident-card {
+    page-break-inside: avoid;
+    border: 1px solid #cbd5e1 !important;
+    background: #f8fafc !important;
+    color: #0f172a !important;
+    margin-bottom: 12px !important;
+    border-radius: 8px !important;
+  }
+}
+
+
