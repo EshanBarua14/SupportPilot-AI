@@ -144,6 +144,158 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
     }));
   };
 
+  const handleGenerateAuditReportPDF = () => {
+    const logsToExport = selectedLogIds.length > 0
+      ? filteredLogs.filter(l => selectedLogIds.includes(l.id))
+      : filteredLogs;
+
+    if (logsToExport.length === 0) return;
+
+    try {
+      const doc = new jsPDF();
+      const dateStr = new Date().toLocaleString();
+
+      // Background header band
+      doc.setFillColor(15, 23, 42); // Slate-900
+      doc.rect(0, 0, 210, 36, 'F');
+
+      // Title & Subtitle
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(16);
+      doc.setTextColor(255, 255, 255);
+      doc.text("SUPPORTPILOT EXECUTIVE AUDIT REPORT", 14, 18);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(165, 180, 252);
+      doc.text("IMMUTABLE SECURITY LEDGER & 24-HOUR OPERATOR ACTIVITY DIGEST", 14, 25);
+
+      doc.setTextColor(203, 213, 225);
+      doc.setFontSize(8);
+      doc.text(`Generated: ${dateStr} | Chief Auditor: Eshan Barua (CTO)`, 14, 32);
+
+      // Section 1: Executive Overview & Statistics
+      doc.setTextColor(99, 102, 241);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text("1. EXECUTIVE AUDIT SUMMARY & METRICS", 14, 46);
+
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.5);
+      doc.line(14, 48, 196, 48);
+
+      doc.setFillColor(248, 250, 252);
+      doc.rect(14, 51, 182, 18, 'F');
+      doc.setDrawColor(203, 213, 225);
+      doc.setLineWidth(0.2);
+      doc.rect(14, 51, 182, 18, 'S');
+
+      const successCount = logsToExport.filter(l => l.status === 'SUCCESS').length;
+      const failedCount = logsToExport.filter(l => l.status === 'FAILED').length;
+      const pendingCount = logsToExport.filter(l => l.status === 'PENDING_APPROVAL').length;
+
+      doc.setTextColor(30, 41, 59);
+      doc.setFontSize(8.5);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Total Filtered Logs: `, 18, 58);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`${logsToExport.length}`, 52, 58);
+
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Success Rate: `, 85, 58);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`${Math.round((successCount / (logsToExport.length || 1)) * 100)}% (${successCount} Passed)`, 110, 58);
+
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Security Flags: `, 18, 64);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`${failedCount} Failed / ${pendingCount} Pending Approval`, 52, 64);
+
+      // Section 2: Top 5 Highlighted Security & Operational Events
+      doc.setTextColor(99, 102, 241);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text("2. TOP 5 HIGHLIGHTED SECURITY & OPERATIONAL EVENTS", 14, 78);
+      doc.line(14, 80, 196, 80);
+
+      // Pick top 5 prioritized events (prioritizing FAILED or PENDING_APPROVAL first, then recent)
+      const top5Events = [...logsToExport].sort((a, b) => {
+        const priorityA = a.status === 'FAILED' ? 3 : a.status === 'PENDING_APPROVAL' ? 2 : 1;
+        const priorityB = b.status === 'FAILED' ? 3 : b.status === 'PENDING_APPROVAL' ? 2 : 1;
+        return priorityB - priorityA;
+      }).slice(0, 5);
+
+      let yPos = 86;
+      top5Events.forEach((event, idx) => {
+        doc.setFillColor(241, 245, 249);
+        doc.rect(14, yPos, 182, 16, 'F');
+        doc.setDrawColor(203, 213, 225);
+        doc.rect(14, yPos, 182, 16, 'S');
+
+        doc.setFontSize(8.5);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(30, 41, 59);
+        doc.text(`#${idx + 1} [${event.status}] - ${event.action} (${event.module})`, 18, yPos + 6);
+
+        doc.setFontSize(7.5);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(100, 116, 139);
+        doc.text(`Operator: ${event.operator} | Time: ${event.timestamp}`, 18, yPos + 11);
+
+        doc.setFontSize(7.5);
+        doc.setFont('courier', 'normal');
+        doc.setTextColor(15, 23, 42);
+        const snippet = event.payload.length > 85 ? event.payload.substring(0, 85) + '...' : event.payload;
+        doc.text(`Payload: ${snippet}`, 18, yPos + 15);
+
+        yPos += 19;
+      });
+
+      // Section 3: User Activity Trends (Last 24 Hours)
+      yPos += 4;
+      doc.setTextColor(99, 102, 241);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text("3. USER ACTIVITY TRENDS & OPERATOR ANALYSIS (24H)", 14, yPos);
+      doc.line(14, yPos + 2, 196, yPos + 2);
+      yPos += 8;
+
+      // Group activity by operator
+      const operatorCounts: Record<string, number> = {};
+      logsToExport.forEach(l => {
+        operatorCounts[l.operator] = (operatorCounts[l.operator] || 0) + 1;
+      });
+
+      doc.setFontSize(8.5);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(30, 41, 59);
+      
+      Object.entries(operatorCounts).slice(0, 6).forEach(([op, cnt]) => {
+        const pct = Math.round((cnt / logsToExport.length) * 100);
+        doc.text(`\u2022 Operator: ${op} — ${cnt} actions logged (${pct}% total volume)`, 18, yPos);
+        yPos += 5.5;
+      });
+
+      // Footer
+      doc.setFillColor(15, 23, 42);
+      doc.rect(0, 282, 210, 15, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(255, 255, 255);
+      doc.text("SUPPORTPILOT IMMUTABLE SECURITY & COMPLIANCE SYSTEM", 14, 291);
+      doc.setFont('helvetica', 'normal');
+      doc.text("Page 1 of 1", 180, 291);
+
+      doc.save(`SupportPilot_Audit_Report_${new Date().toISOString().slice(0, 10)}.pdf`);
+
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: "Audit Report PDF generated and downloaded successfully!" }
+      }));
+    } catch (err) {
+      console.error("Error generating Audit Report PDF:", err);
+    }
+  };
+
   return (
     <div className="flex h-[calc(100vh-130px)] flex-col rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden text-xs font-sans">
       
@@ -198,6 +350,16 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
                   <span>Interactive Audit Query Filters</span>
                 </span>
                 <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={handleGenerateAuditReportPDF}
+                    className="text-amber-300 hover:text-amber-200 text-[10px] font-mono font-bold flex items-center space-x-1.5 border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 rounded-lg cursor-pointer transition-all shadow-sm"
+                    title="Generate summarized Audit Report PDF with Top 5 events and 24h trends"
+                  >
+                    <Icons.FileText className="h-3.5 w-3.5 text-amber-400" />
+                    <span>Audit Report (PDF)</span>
+                  </button>
+
                   {/* Dedicated Download Selection Button */}
                   <button
                     type="button"

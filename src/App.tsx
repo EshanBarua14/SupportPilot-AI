@@ -20,6 +20,7 @@ import { useSearchMetrics } from './hooks/useSearchMetrics';
 import ErrorBoundary from './components/ErrorBoundary';
 import { SidebarNavigation } from './components/SidebarNavigation';
 import { AlertsTicker } from './components/AlertsTicker';
+import SlaHealthHeaderWidget from './components/SlaHealthHeaderWidget';
 
 const HighlightMatch = ({ text, query }: { text: string; query: string }) => {
   if (!query || !query.trim() || !text) return <>{text}</>;
@@ -1015,31 +1016,90 @@ function AppContent() {
     return flat;
   }, [filteredIncidents, filteredRunbooks, filteredAudits, searchQuery, sortBy, searchTimeRange, searchSeverityFilter, setActiveTab, setShowSearchPreview, setToastMessage, setSelectedSearchRunbook, trackClick]);
 
-  // CSV Exporter for Search Results
+  // Export Current Filtered View in JSON or CSV
+  const handleExportCurrentFilterJSON = useCallback(() => {
+    if (flatSearchResults.length === 0) {
+      setToastMessage('No filtered search results available to export.');
+      return;
+    }
+
+    const activeFilters = {
+      searchQuery: searchQuery || '(None)',
+      categoryFilter: searchCategoryFilter,
+      severityFilter: searchSeverityFilter,
+      quickFilter,
+      timeRange: searchTimeRange,
+      myIncidentsOnly,
+      groupBySeverity,
+      totalFilteredItems: flatSearchResults.length,
+      exportedAt: new Date().toISOString()
+    };
+
+    const exportPayload = {
+      metadata: {
+        system: "SupportPilot AI Indexing Engine",
+        description: "Active Filtered View Export",
+        activeFilters
+      },
+      items: flatSearchResults.map(item => ({
+        id: item.id,
+        type: item.type,
+        titleOrAction: (item as any).title || (item as any).action || '',
+        descriptionOrPayload: (item as any).description || (item as any).payload || '',
+        severityOrCategory: (item as any).severity || (item as any).category || 'N/A',
+        status: (item as any).status || 'N/A',
+        appName: (item as any).appName || (item as any).module || 'N/A',
+        createdAt: (item as any).createdAt || (item as any).timestamp || 'N/A'
+      }))
+    };
+
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportPayload, null, 2));
+    const link = document.createElement('a');
+    link.setAttribute('href', dataStr);
+    link.setAttribute('download', `supportpilot_filtered_export_${Date.now()}.json`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setToastMessage(`Exported ${flatSearchResults.length} active filtered view items to JSON.`);
+  }, [flatSearchResults, searchQuery, searchCategoryFilter, searchSeverityFilter, quickFilter, searchTimeRange, myIncidentsOnly, groupBySeverity, setToastMessage]);
+
   const handleExportSearchCSV = useCallback(() => {
     const listToExport = flatSearchResults;
     if (listToExport.length === 0) {
       setToastMessage('No active search results to export.');
       return;
     }
-    const headers = ['ID', 'Type', 'Title_or_Action', 'Details', 'Severity_or_Category'];
+
+    const metaRows = [
+      `# SupportPilot Filtered View Export`,
+      `# ExportedAt: ${new Date().toISOString()}`,
+      `# Active Query: "${searchQuery || 'ALL'}"`,
+      `# Category: ${searchCategoryFilter}, Severity: ${searchSeverityFilter}, QuickFilter: ${quickFilter}, TimeRange: ${searchTimeRange}`,
+      `# Total Filtered Items: ${flatSearchResults.length}`,
+      ``
+    ];
+
+    const headers = ['ID', 'Type', 'Title_or_Action', 'Details', 'Severity_or_Category', 'Status', 'App_or_Module'];
     const rows = listToExport.map(item => [
       `"${item.id}"`,
       `"${item.type}"`,
       `"${((item as any).title || (item as any).action || '').replace(/"/g, '""')}"`,
       `"${((item as any).description || (item as any).payload || '').replace(/"/g, '""')}"`,
-      `"${((item as any).severity || (item as any).category || 'N/A')}"`
+      `"${((item as any).severity || (item as any).category || 'N/A')}"`,
+      `"${((item as any).status || 'N/A')}"`,
+      `"${((item as any).appName || (item as any).module || 'N/A')}"`
     ]);
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+
+    const csvContent = 'data:text/csv;charset=utf-8,' + [...metaRows, headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `supportpilot_search_export_${Date.now()}.csv`);
+    link.setAttribute('download', `supportpilot_filtered_export_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    setToastMessage('Exported active search index to CSV file.');
-  }, [flatSearchResults, setToastMessage]);
+    setToastMessage(`Exported ${flatSearchResults.length} active filtered view items to CSV.`);
+  }, [flatSearchResults, searchQuery, searchCategoryFilter, searchSeverityFilter, quickFilter, searchTimeRange, setToastMessage]);
 
   const triggerVoiceCommandProcessing = useCallback((phrase: string) => {
     const cleanPhrase = phrase.toLowerCase().trim();
@@ -1441,6 +1501,11 @@ function AppContent() {
 
             <div className="h-4 w-[1px] bg-slate-800 hidden xl:block" />
 
+            {/* SLA Health Header Widget with Recharts Sparkline */}
+            <SlaHealthHeaderWidget />
+
+            <div className="h-4 w-[1px] bg-slate-800 hidden xl:block" />
+
             {/* Persistent 'Incident Health Bar' sparkline */}
             <div className="hidden xl:flex items-center space-x-3 rounded-lg border border-slate-900 bg-slate-900/35 px-2.5 py-1 font-mono text-[10px] text-slate-400 select-none">
               <div className="text-left">
@@ -1721,16 +1786,28 @@ function AppContent() {
                             </span>
                           )}
 
-                          {/* Export CSV Button */}
-                          <button
-                            type="button"
-                            onClick={handleExportSearchCSV}
-                            className="px-2 py-1 rounded-md text-[8px] font-mono font-bold bg-indigo-950 hover:bg-indigo-900 text-indigo-200 border border-indigo-700/60 hover:border-indigo-500 flex items-center space-x-1 cursor-pointer transition-all"
-                            title="Export visible search results to CSV"
-                          >
-                            <Icons.Download className="h-2.5 w-2.5 text-indigo-400" />
-                            <span>Export CSV</span>
-                          </button>
+                          {/* Export Current Filter (JSON & CSV) Toolbar Action */}
+                          <div className="flex items-center space-x-1">
+                            <button
+                              type="button"
+                              onClick={handleExportCurrentFilterJSON}
+                              className="px-2 py-1 rounded-md text-[8px] font-mono font-bold bg-amber-950/60 hover:bg-amber-900/80 text-amber-200 border border-amber-500/40 hover:border-amber-400 flex items-center space-x-1 cursor-pointer transition-all shadow-sm"
+                              title="Export active filtered view parameters and records to structured JSON"
+                            >
+                              <Icons.FileJson className="h-2.5 w-2.5 text-amber-400" />
+                              <span>Export Filter (JSON)</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={handleExportSearchCSV}
+                              className="px-2 py-1 rounded-md text-[8px] font-mono font-bold bg-indigo-950 hover:bg-indigo-900 text-indigo-200 border border-indigo-700/60 hover:border-indigo-500 flex items-center space-x-1 cursor-pointer transition-all shadow-sm"
+                              title="Export active filtered view parameters and records to CSV"
+                            >
+                              <Icons.FileSpreadsheet className="h-2.5 w-2.5 text-indigo-400" />
+                              <span>Export Filter (CSV)</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
 

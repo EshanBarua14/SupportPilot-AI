@@ -45,7 +45,7 @@ export const VoiceCommandHistoryPanel: React.FC<VoiceCommandHistoryPanelProps> =
   useEffect(() => {
     const handleVoiceEvent = (e: CustomEvent<VoiceCommandItem>) => {
       if (e.detail) {
-        setCommands(prev => [e.detail, ...prev]);
+        setCommands(prev => [e.detail, ...prev].slice(0, 10));
         setIsOpen(true); // Auto expand on new voice command
       }
     };
@@ -59,10 +59,16 @@ export const VoiceCommandHistoryPanel: React.FC<VoiceCommandHistoryPanelProps> =
   const handleReplay = (item: VoiceCommandItem) => {
     if (onReplayCommand) {
       onReplayCommand(item.commandName, item.param);
-      window.dispatchEvent(new CustomEvent('show-toast', {
-        detail: { message: `Re-executed voice command: ${item.commandName} ${item.param || ''}` }
-      }));
+    } else {
+      if (item.commandName === 'FILTER_SEVERITY') {
+        window.dispatchEvent(new CustomEvent('voice-filter-severity', { detail: { severity: item.param } }));
+      } else if (item.commandName === 'SET_STATUS') {
+        window.dispatchEvent(new CustomEvent('voice-set-status', { detail: { status: item.param } }));
+      }
     }
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `Re-executed voice command: ${item.commandName} (${item.param || 'exec'})` }
+    }));
   };
 
   const clearHistory = () => {

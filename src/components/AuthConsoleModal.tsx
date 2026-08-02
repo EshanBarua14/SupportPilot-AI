@@ -9,8 +9,10 @@ export type AuthMode =
   | 'forgot_password' 
   | 'phone_otp' 
   | 'google_oauth' 
+  | 'sso_login'
   | '2fa_verify' 
-  | '2fa_setup';
+  | '2fa_setup'
+  | 'success_state';
 
 interface AuthConsoleModalProps {
   isOpen: boolean;
@@ -38,7 +40,20 @@ export default function AuthConsoleModal({
   // Form State - Login
   const [email, setEmail] = useState('eshanbaruabarua@gmail.com');
   const [password, setPassword] = useState('');
+  // Form State - Password Visibility Toggles
   const [showPassword, setShowPassword] = useState(false);
+  const [showRegPassword, setShowRegPassword] = useState(false);
+  const [showRegConfirmPassword, setShowRegConfirmPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
+
+  // Form State - Enterprise SSO / OAuth
+  const [ssoProvider, setSsoProvider] = useState<'okta' | 'microsoft' | 'google' | 'ping'>('okta');
+  const [ssoDomain, setSsoDomain] = useState('supportpilot.okta.com');
+
+  // Success State Transition
+  const [successUserData, setSuccessUserData] = useState<AuthUser | null>(null);
+  const [successAuthMethod, setSuccessAuthMethod] = useState<'password' | 'google' | 'phone_otp' | 'sso'>('password');
   const [rememberMe, setRememberMe] = useState(true);
 
   // Form State - Registration
@@ -93,6 +108,21 @@ export default function AuthConsoleModal({
     setIsShaking(true);
     setTimeout(() => setIsShaking(false), 500);
   };
+
+  const triggerLoginSuccessState = (user: AuthUser, authMethod: 'password' | 'google' | 'phone_otp' | 'sso') => {
+    setSuccessUserData(user);
+    setSuccessAuthMethod(authMethod);
+    setMode('success_state');
+  };
+
+  useEffect(() => {
+    if (mode === 'success_state' && successUserData) {
+      const timer = setTimeout(() => {
+        onLoginSuccess(successUserData, successAuthMethod);
+      }, 1400);
+      return () => clearTimeout(timer);
+    }
+  }, [mode, successUserData, successAuthMethod, onLoginSuccess]);
 
   // OTP Resend Timer
   useEffect(() => {
@@ -152,7 +182,7 @@ export default function AuthConsoleModal({
           `Primary credentials validated for ${targetUser.email}. Prompting mandatory 2FA TOTP code.`
         );
       } else {
-        onLoginSuccess(targetUser, 'password');
+        triggerLoginSuccessState(targetUser, 'password');
         handleAddAuditLog(
           targetUser.name,
           'LOGIN_EMAIL_PASSWORD',
@@ -185,7 +215,7 @@ export default function AuthConsoleModal({
         sessionToken,
       };
 
-      onLoginSuccess(googleUser, 'google');
+      triggerLoginSuccessState(googleUser, 'google');
       handleAddAuditLog(
         googleUser.name,
         'GOOGLE_OAUTH_LOGIN',
@@ -194,6 +224,45 @@ export default function AuthConsoleModal({
         `Authenticated via Google Workspace OAuth 2.0 (${googleUser.email}). Persistent session established.`
       );
     }, 600);
+  };
+
+  // Handle Enterprise SSO / SAML 2.0 Sign-In
+  const handleSsoLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+
+    if (!ssoDomain || !ssoDomain.includes('.')) {
+      triggerErrorState('Please enter a valid SSO identity domain (e.g., supportpilot.okta.com)', ['ssoDomain']);
+      return;
+    }
+
+    setIsLoading(true);
+
+    setTimeout(() => {
+      setIsLoading(false);
+      const sessionToken = `sp_sess_sso_${ssoProvider}_${Date.now()}`;
+      const ssoUser: AuthUser = {
+        id: `usr_sso_${Date.now().toString().slice(-4)}`,
+        name: 'Eshan Barua (SSO Operator)',
+        email: 'eshanbaruabarua@gmail.com',
+        role: `Enterprise Operator (${ssoProvider.toUpperCase()})`,
+        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=250&q=80',
+        pod: 'SRE & Platform Engineering',
+        phone: '+1 (555) 019-2834',
+        is2FAEnabled: false,
+        authMethod: 'sso',
+        sessionToken,
+      };
+
+      triggerLoginSuccessState(ssoUser, 'sso');
+      handleAddAuditLog(
+        ssoUser.name,
+        'SSO_SAML2_AUTHENTICATION',
+        'Enterprise Identity Portal',
+        'SUCCESS',
+        `Authenticated via Enterprise SSO / SAML 2.0 (${ssoProvider.toUpperCase()} - ${ssoDomain}). Domain token validated.`
+      );
+    }, 700);
   };
 
   // Handle Send Phone SMS OTP
@@ -250,7 +319,7 @@ export default function AuthConsoleModal({
         sessionToken,
       };
 
-      onLoginSuccess(phoneUser, 'phone_otp');
+      triggerLoginSuccessState(phoneUser, 'phone_otp');
       handleAddAuditLog(
         phoneUser.name,
         'PHONE_OTP_VERIFIED',
@@ -317,7 +386,7 @@ export default function AuthConsoleModal({
           `Registered new operator account for ${newUser.email} (${newUser.pod}). Redirected to 2FA setup wizard.`
         );
       } else {
-        onLoginSuccess(newUser, 'password');
+        triggerLoginSuccessState(newUser, 'password');
         handleAddAuditLog(
           newUser.name,
           'USER_REGISTRATION_SUCCESS',
@@ -419,7 +488,7 @@ export default function AuthConsoleModal({
         totpSecret: setup2FASecret,
       };
 
-      onLoginSuccess(updatedUser, updatedUser.authMethod || 'password');
+      triggerLoginSuccessState(updatedUser, (updatedUser.authMethod as any) || 'password');
       handleAddAuditLog(
         updatedUser.name,
         '2FA_ENROLLMENT_COMPLETED',
@@ -445,7 +514,7 @@ export default function AuthConsoleModal({
     setTimeout(() => {
       setIsLoading(false);
       const finalUser = pendingUser || currentUser;
-      onLoginSuccess(finalUser, finalUser.authMethod || 'password');
+      triggerLoginSuccessState(finalUser, (finalUser.authMethod as any) || 'password');
       handleAddAuditLog(
         finalUser.name,
         '2FA_VERIFICATION_SUCCESS',
@@ -466,17 +535,33 @@ export default function AuthConsoleModal({
         {/* Ambient Glow Accent */}
         <div className="absolute -top-16 left-1/2 -translate-x-1/2 w-64 h-64 bg-indigo-600/15 rounded-full blur-3xl pointer-events-none" />
 
+        {/* Top Right Close Button */}
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute top-4 right-4 p-1.5 rounded-lg bg-slate-900/80 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 transition-all cursor-pointer z-10"
+          title="Close Identity Console"
+        >
+          <Icons.X className="h-4 w-4" />
+        </button>
+
         {/* Modal Header Branding */}
         <div className="relative text-center mb-6">
-          <div className="inline-flex items-center justify-center h-12 w-12 rounded-xl bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 mb-3 shadow-inner">
-            <Icons.ShieldCheck className="h-6 w-6" />
+          <div className="inline-flex items-center justify-center h-12 w-12 rounded-xl bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 mb-2.5 shadow-inner">
+            <Icons.ShieldCheck className="h-6 w-6 text-indigo-400" />
           </div>
           <h2 className="text-base font-black tracking-wider uppercase text-white font-display">
             SupportPilot AI Workspace
           </h2>
-          <p className="text-[10px] text-slate-400 font-mono mt-0.5 uppercase tracking-widest">
-            Enterprise Identity & Auth Console
-          </p>
+          <div className="flex items-center justify-center space-x-2 mt-1">
+            <span className="text-[10px] text-slate-400 font-mono uppercase tracking-widest">
+              Enterprise Identity & Auth Console
+            </span>
+            <span className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-[8px] font-mono text-emerald-400 font-bold">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>K8S_AUTH_POD: 100% UP</span>
+            </span>
+          </div>
         </div>
 
         {/* Dismissible Error Alert */}
@@ -631,6 +716,61 @@ export default function AuthConsoleModal({
                 </button>
               </form>
 
+              {/* Quick Demo Operator Persona Autofill Bar */}
+              <div className="rounded-xl border border-indigo-500/20 bg-indigo-950/20 p-2.5 space-y-2 text-left my-3">
+                <div className="flex items-center justify-between text-[9px] font-mono font-bold text-indigo-300 uppercase tracking-wider">
+                  <span className="flex items-center space-x-1">
+                    <Icons.Zap className="h-3 w-3 text-amber-400 animate-pulse" />
+                    <span>Demo Operator Sign-In:</span>
+                  </span>
+                  <span className="text-slate-500 text-[8px]">1-Click Autofill</span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-1.5 text-xxs font-mono">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEmail('eshanbaruabarua@gmail.com');
+                      setPassword('cto_pass_2026');
+                      setSuccessMessage('Autofilled Eshan Barua (CTO) credentials. Click Sign In.');
+                    }}
+                    className="p-1.5 rounded-lg bg-slate-900/90 hover:bg-indigo-600/30 border border-slate-800 text-slate-200 hover:text-white transition-all text-center cursor-pointer flex flex-col items-center"
+                    title="Autofill Eshan Barua (CTO) credentials"
+                  >
+                    <span className="font-bold text-indigo-300 truncate w-full">Eshan Barua</span>
+                    <span className="text-[7.5px] text-slate-400">CTO</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEmail('sre.lead@supportpilot.io');
+                      setPassword('sre_pass_2026');
+                      setSuccessMessage('Autofilled Sarah Chen (Lead SRE) credentials. Click Sign In.');
+                    }}
+                    className="p-1.5 rounded-lg bg-slate-900/90 hover:bg-indigo-600/30 border border-slate-800 text-slate-200 hover:text-white transition-all text-center cursor-pointer flex flex-col items-center"
+                    title="Autofill Lead SRE credentials"
+                  >
+                    <span className="font-bold text-emerald-300 truncate w-full">Sarah Chen</span>
+                    <span className="text-[7.5px] text-slate-400">Lead SRE</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEmail('security.auditor@supportpilot.io');
+                      setPassword('sec_pass_2026');
+                      setSuccessMessage('Autofilled Marcus Vance (Security Auditor) credentials. Click Sign In.');
+                    }}
+                    className="p-1.5 rounded-lg bg-slate-900/90 hover:bg-indigo-600/30 border border-slate-800 text-slate-200 hover:text-white transition-all text-center cursor-pointer flex flex-col items-center"
+                    title="Autofill Security Auditor credentials"
+                  >
+                    <span className="font-bold text-amber-300 truncate w-full">Marcus Vance</span>
+                    <span className="text-[7.5px] text-slate-400">SecAuditor</span>
+                  </button>
+                </div>
+              </div>
+
               <div className="relative my-4 flex items-center justify-center">
                 <div className="absolute inset-0 flex items-center">
                   <div className="w-full border-t border-slate-800" />
@@ -641,7 +781,21 @@ export default function AuthConsoleModal({
               </div>
 
               {/* Quick Auth Alternatives */}
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setErrorMessage(null);
+                    setSuccessMessage(null);
+                    setMode('sso_login');
+                  }}
+                  className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/90 border border-indigo-500/30 hover:bg-indigo-950/40 hover:border-indigo-500/60 transition-all cursor-pointer group"
+                  title="Sign in with Enterprise SSO or SAML 2.0"
+                >
+                  <Icons.ShieldCheck className="h-4 w-4 text-indigo-400 group-hover:scale-110 transition-transform mb-1" />
+                  <span className="font-semibold text-[10px] text-slate-200">Enterprise SSO</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -649,10 +803,11 @@ export default function AuthConsoleModal({
                     setSuccessMessage(null);
                     setMode('google_oauth');
                   }}
-                  className="flex items-center justify-center space-x-2 rounded-xl bg-slate-900 border border-slate-800 p-2.5 text-xs text-slate-200 hover:bg-slate-800 hover:border-slate-700 transition-all cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/90 border border-slate-800 hover:bg-slate-800 hover:border-slate-700 transition-all cursor-pointer group"
+                  title="Sign in with Google Workspace OAuth"
                 >
-                  <Icons.Chrome className="h-4 w-4 text-emerald-400" />
-                  <span className="font-semibold text-xxs">Google OAuth</span>
+                  <Icons.Chrome className="h-4 w-4 text-emerald-400 group-hover:scale-110 transition-transform mb-1" />
+                  <span className="font-semibold text-[10px] text-slate-200">Google OAuth</span>
                 </button>
 
                 <button
@@ -662,10 +817,11 @@ export default function AuthConsoleModal({
                     setSuccessMessage(null);
                     setMode('phone_otp');
                   }}
-                  className="flex items-center justify-center space-x-2 rounded-xl bg-slate-900 border border-slate-800 p-2.5 text-xs text-slate-200 hover:bg-slate-800 hover:border-slate-700 transition-all cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/90 border border-slate-800 hover:bg-slate-800 hover:border-slate-700 transition-all cursor-pointer group"
+                  title="Sign in with Phone SMS OTP"
                 >
-                  <Icons.Smartphone className="h-4 w-4 text-indigo-400" />
-                  <span className="font-semibold text-xxs">Phone SMS OTP</span>
+                  <Icons.Smartphone className="h-4 w-4 text-amber-400 group-hover:scale-110 transition-transform mb-1" />
+                  <span className="font-semibold text-[10px] text-slate-200">SMS OTP</span>
                 </button>
               </div>
 
@@ -772,32 +928,50 @@ export default function AuthConsoleModal({
                     <label className="text-[9px] font-mono font-bold text-slate-300 uppercase tracking-wider">
                       Password
                     </label>
-                    <input
-                      type="password"
-                      value={regPassword}
-                      onChange={(e) => setRegPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      required
-                      className={`w-full rounded-xl border bg-slate-900 px-3 py-2 text-xs text-white focus:outline-none ${
-                        invalidFields.includes('regPassword') ? 'border-rose-500/80 bg-rose-950/20' : 'border-slate-800 focus:border-indigo-500'
-                      }`}
-                    />
+                    <div className="relative">
+                      <input
+                        type={showRegPassword ? 'text' : 'password'}
+                        value={regPassword}
+                        onChange={(e) => setRegPassword(e.target.value)}
+                        placeholder="••••••••••••"
+                        required
+                        className={`w-full rounded-xl border bg-slate-900 pr-8 pl-3 py-2 text-xs text-white focus:outline-none ${
+                          invalidFields.includes('regPassword') ? 'border-rose-500/80 bg-rose-950/20' : 'border-slate-800 focus:border-indigo-500'
+                        }`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowRegPassword(!showRegPassword)}
+                        className="absolute right-2.5 top-2.5 text-slate-500 hover:text-slate-300"
+                      >
+                        {showRegPassword ? <Icons.EyeOff className="h-3.5 w-3.5" /> : <Icons.Eye className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="space-y-1">
                     <label className="text-[9px] font-mono font-bold text-slate-300 uppercase tracking-wider">
                       Confirm Password
                     </label>
-                    <input
-                      type="password"
-                      value={regConfirmPassword}
-                      onChange={(e) => setRegConfirmPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      required
-                      className={`w-full rounded-xl border bg-slate-900 px-3 py-2 text-xs text-white focus:outline-none ${
-                        invalidFields.includes('regConfirmPassword') ? 'border-rose-500/80 bg-rose-950/20' : 'border-slate-800 focus:border-indigo-500'
-                      }`}
-                    />
+                    <div className="relative">
+                      <input
+                        type={showRegConfirmPassword ? 'text' : 'password'}
+                        value={regConfirmPassword}
+                        onChange={(e) => setRegConfirmPassword(e.target.value)}
+                        placeholder="••••••••••••"
+                        required
+                        className={`w-full rounded-xl border bg-slate-900 pr-8 pl-3 py-2 text-xs text-white focus:outline-none ${
+                          invalidFields.includes('regConfirmPassword') ? 'border-rose-500/80 bg-rose-950/20' : 'border-slate-800 focus:border-indigo-500'
+                        }`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowRegConfirmPassword(!showRegConfirmPassword)}
+                        className="absolute right-2.5 top-2.5 text-slate-500 hover:text-slate-300"
+                      >
+                        {showRegConfirmPassword ? <Icons.EyeOff className="h-3.5 w-3.5" /> : <Icons.Eye className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -972,32 +1146,50 @@ export default function AuthConsoleModal({
                     <label className="text-[9.5px] font-mono font-bold text-slate-300 uppercase tracking-wider">
                       New Password
                     </label>
-                    <input
-                      type="password"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      required
-                      className={`w-full rounded-xl border bg-slate-900 px-3 py-2 text-xs text-white focus:outline-none ${
-                        invalidFields.includes('newPassword') ? 'border-rose-500 bg-rose-950/20' : 'border-slate-800 focus:border-indigo-500'
-                      }`}
-                    />
+                    <div className="relative">
+                      <input
+                        type={showNewPassword ? 'text' : 'password'}
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="••••••••••••"
+                        required
+                        className={`w-full rounded-xl border bg-slate-900 pr-9 pl-3 py-2 text-xs text-white focus:outline-none ${
+                          invalidFields.includes('newPassword') ? 'border-rose-500 bg-rose-950/20' : 'border-slate-800 focus:border-indigo-500'
+                        }`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPassword(!showNewPassword)}
+                        className="absolute right-2.5 top-2.5 text-slate-500 hover:text-slate-300"
+                      >
+                        {showNewPassword ? <Icons.EyeOff className="h-3.5 w-3.5" /> : <Icons.Eye className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="space-y-1 text-left">
                     <label className="text-[9.5px] font-mono font-bold text-slate-300 uppercase tracking-wider">
                       Confirm New Password
                     </label>
-                    <input
-                      type="password"
-                      value={confirmNewPassword}
-                      onChange={(e) => setConfirmNewPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      required
-                      className={`w-full rounded-xl border bg-slate-900 px-3 py-2 text-xs text-white focus:outline-none ${
-                        invalidFields.includes('confirmNewPassword') ? 'border-rose-500 bg-rose-950/20' : 'border-slate-800 focus:border-indigo-500'
-                      }`}
-                    />
+                    <div className="relative">
+                      <input
+                        type={showConfirmNewPassword ? 'text' : 'password'}
+                        value={confirmNewPassword}
+                        onChange={(e) => setConfirmNewPassword(e.target.value)}
+                        placeholder="••••••••••••"
+                        required
+                        className={`w-full rounded-xl border bg-slate-900 pr-9 pl-3 py-2 text-xs text-white focus:outline-none ${
+                          invalidFields.includes('confirmNewPassword') ? 'border-rose-500 bg-rose-950/20' : 'border-slate-800 focus:border-indigo-500'
+                        }`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmNewPassword(!showConfirmNewPassword)}
+                        className="absolute right-2.5 top-2.5 text-slate-500 hover:text-slate-300"
+                      >
+                        {showConfirmNewPassword ? <Icons.EyeOff className="h-3.5 w-3.5" /> : <Icons.Eye className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
                   </div>
 
                   <button
@@ -1498,6 +1690,236 @@ export default function AuthConsoleModal({
               >
                 Cancel & Return to Login
               </button>
+            </motion.div>
+          )}
+
+          {/* MODE: ENTERPRISE SSO / SAML 2.0 */}
+          {mode === 'sso_login' && (
+            <motion.div
+              key="sso_login"
+              initial={{ opacity: 0, y: 12, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -12, scale: 0.98 }}
+              transition={{ duration: 0.2 }}
+              className="space-y-4"
+            >
+              <div className="text-center">
+                <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 mb-2">
+                  <Icons.Key className="h-5 w-5" />
+                </div>
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">Enterprise Single Sign-On (SSO / SAML 2.0)</h3>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Authenticate using your corporate Okta, Azure AD, or Ping Identity portal.
+                </p>
+              </div>
+
+              {/* Provider Selection */}
+              <div className="grid grid-cols-4 gap-1.5 p-1 rounded-xl bg-slate-900 border border-slate-800 text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSsoProvider('okta');
+                    setSsoDomain('supportpilot.okta.com');
+                  }}
+                  className={`py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                    ssoProvider === 'okta' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Okta
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSsoProvider('microsoft');
+                    setSsoDomain('corp.microsoft.com');
+                  }}
+                  className={`py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                    ssoProvider === 'microsoft' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Azure AD
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSsoProvider('google');
+                    setSsoDomain('workspace.supportpilot.io');
+                  }}
+                  className={`py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                    ssoProvider === 'google' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  GWorkspace
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSsoProvider('ping');
+                    setSsoDomain('sso.pingfederate.com');
+                  }}
+                  className={`py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                    ssoProvider === 'ping' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  PingID
+                </button>
+              </div>
+
+              <form onSubmit={handleSsoLogin} className="space-y-3">
+                <div className="space-y-1 text-left">
+                  <label className="text-[9.5px] font-mono font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between">
+                    <span>Identity Domain URL</span>
+                    <span className="text-indigo-400 text-[8.5px]">SAML 2.0 / OAuth 2.0</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={ssoDomain}
+                      onChange={(e) => setSsoDomain(e.target.value)}
+                      placeholder="company.okta.com"
+                      required
+                      className={`w-full rounded-xl border bg-slate-900/90 pl-9 pr-3 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none transition-all ${
+                        invalidFields.includes('ssoDomain') ? 'border-rose-500 bg-rose-950/20' : 'border-slate-800 focus:border-indigo-500'
+                      }`}
+                    />
+                    <Icons.Globe className="absolute left-3 top-3 h-4 w-4 text-slate-500" />
+                  </div>
+                </div>
+
+                {/* 1-Click Domain Presets */}
+                <div className="flex items-center space-x-1.5 text-[8.5px] font-mono text-slate-400 flex-wrap gap-y-1">
+                  <span className="uppercase text-slate-500">Presets:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSsoProvider('okta');
+                      setSsoDomain('supportpilot.okta.com');
+                    }}
+                    className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 hover:border-indigo-500/50 text-indigo-300 cursor-pointer"
+                  >
+                    supportpilot.okta.com
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSsoProvider('microsoft');
+                      setSsoDomain('sso.corp.io');
+                    }}
+                    className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 hover:border-indigo-500/50 text-indigo-300 cursor-pointer"
+                  >
+                    sso.corp.io
+                  </button>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full flex items-center justify-center space-x-2 rounded-xl bg-indigo-600 py-3 text-xs font-bold text-white hover:bg-indigo-500 transition-all cursor-pointer shadow-lg shadow-indigo-600/25 disabled:opacity-50"
+                >
+                  {isLoading ? (
+                    <Icons.RefreshCw className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <>
+                      <Icons.LogIn className="h-4 w-4" />
+                      <span>Authenticate via {ssoProvider.toUpperCase()} SSO</span>
+                    </>
+                  )}
+                </button>
+              </form>
+
+              <button
+                type="button"
+                onClick={() => setMode('login')}
+                className="w-full rounded-xl bg-slate-900 border border-slate-800 py-2.5 text-xs text-slate-400 hover:text-white transition-all cursor-pointer"
+              >
+                Back to Standard Login Options
+              </button>
+            </motion.div>
+          )}
+
+          {/* MODE: SMOOTH SUCCESS STATE ANIMATION */}
+          {mode === 'success_state' && successUserData && (
+            <motion.div
+              key="success_state"
+              initial={{ opacity: 0, scale: 0.9, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: -10 }}
+              transition={{ duration: 0.35, ease: 'easeOut' }}
+              className="py-6 space-y-5 text-center flex flex-col items-center justify-center"
+            >
+              {/* Centered Glowing Checkmark badge with pulsing concentric rings */}
+              <div className="relative flex items-center justify-center">
+                <motion.div
+                  initial={{ scale: 0.5, opacity: 0 }}
+                  animate={{ scale: [1, 1.25, 1], opacity: [0.4, 0.8, 0.4] }}
+                  transition={{ repeat: Infinity, duration: 1.8, ease: 'easeInOut' }}
+                  className="absolute rounded-full bg-emerald-500/20 blur-xl w-24 h-24"
+                />
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+                  className="h-20 w-20 rounded-2xl bg-emerald-500/10 border-2 border-emerald-500/40 text-emerald-400 flex items-center justify-center shadow-xl shadow-emerald-500/20 relative z-10"
+                >
+                  <Icons.CheckCircle2 className="h-10 w-10 text-emerald-400" />
+                </motion.div>
+              </div>
+
+              {/* Title & Badge */}
+              <div className="space-y-1">
+                <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[9px] font-mono font-bold uppercase tracking-wider">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>AUTHENTICATION SUCCESSFUL</span>
+                </div>
+                <h3 className="text-base font-black text-white font-display uppercase tracking-wide pt-1">
+                  Welcome Back, {successUserData.name.split(' ')[0]}
+                </h3>
+                <p className="text-[11px] text-slate-400 font-mono">
+                  Persistent session token established for {successUserData.email}
+                </p>
+              </div>
+
+              {/* User Identity Preview Card */}
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.15 }}
+                className="w-full rounded-xl bg-slate-900/90 border border-slate-800 p-3 flex items-center space-x-3 text-left shadow-lg"
+              >
+                <img
+                  src={successUserData.avatar}
+                  alt={successUserData.name}
+                  className="h-10 w-10 rounded-xl object-cover border border-emerald-500/40 shrink-0"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-bold text-white truncate">{successUserData.name}</div>
+                  <div className="text-[9.5px] text-slate-400 truncate">{successUserData.role}</div>
+                  <div className="flex items-center space-x-2 text-[8.5px] font-mono text-indigo-300 mt-0.5">
+                    <span className="truncate">{successUserData.pod}</span>
+                    <span>•</span>
+                    <span className="text-emerald-400 font-bold uppercase">{successAuthMethod.toUpperCase()}</span>
+                  </div>
+                </div>
+              </motion.div>
+
+              {/* Animated Token & Workspace Launch Progress Bar */}
+              <div className="w-full space-y-1.5 pt-1">
+                <div className="flex justify-between items-center text-[9px] font-mono text-slate-400">
+                  <span className="flex items-center space-x-1">
+                    <Icons.Loader2 className="h-3 w-3 animate-spin text-emerald-400" />
+                    <span>Launching SupportPilot AI Workspace...</span>
+                  </span>
+                  <span className="text-emerald-400 font-bold">100% READY</span>
+                </div>
+                <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+                  <motion.div
+                    initial={{ width: '0%' }}
+                    animate={{ width: '100%' }}
+                    transition={{ duration: 1.2, ease: 'easeInOut' }}
+                    className="h-full bg-gradient-to-r from-emerald-500 via-teal-400 to-indigo-500 rounded-full"
+                  />
+                </div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

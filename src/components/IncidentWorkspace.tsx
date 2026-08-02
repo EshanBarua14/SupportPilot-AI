@@ -21,6 +21,125 @@ import ContextAwareRunbooksWidget from './ContextAwareRunbooksWidget';
 import CorrelationSuggestionCard from './CorrelationSuggestionCard';
 import InfrastructureNodeHeatmap from './InfrastructureNodeHeatmap';
 import InteractiveIncidentTimeline from './InteractiveIncidentTimeline';
+import IncidentCorrelationMap from './IncidentCorrelationMap';
+import ContextualShortcutBar from './ContextualShortcutBar';
+import { DEFAULT_WORKFLOW_KEYMAP } from './ShortcutsModal';
+import { useSupportPilot } from '../context/SupportPilotContext';
+
+export function IncidentStatusTimeline({ incident }: { incident: Incident }) {
+  const isSolved = incident.status === 'SOLVED';
+  const isEscalated = incident.status === 'ESCALATED' || incident.severity === 'CRITICAL';
+  const isInvestigating = incident.status === 'INVESTIGATING' || incident.status === 'SOLVED' || isEscalated;
+
+  const createdAtDate = new Date(incident.createdAt || Date.now());
+  const formatTime = (date: Date) => date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  const steps = [
+    {
+      title: '1. Ticket Ingested & Telemetry Stream',
+      time: formatTime(createdAtDate),
+      actor: `System Ingress (${incident.source})`,
+      desc: `Anomaly threshold exceeded for ${incident.appName}. Initial telemetry packet indexed.`,
+      status: 'completed',
+      badge: 'INGESTED',
+      color: 'border-indigo-500 bg-indigo-500/20 text-indigo-400'
+    },
+    {
+      title: '2. Acknowledged & Triage Initiated',
+      time: formatTime(new Date(createdAtDate.getTime() + 2 * 60000)),
+      actor: incident.assignee || 'Incident Dispatcher',
+      desc: isInvestigating 
+        ? `Triage acknowledged by ${incident.assignee || 'Responder'}. Diagnostic monitors linked.`
+        : 'Awaiting engineer acknowledgment...',
+      status: isInvestigating ? 'completed' : 'pending',
+      badge: 'ACKNOWLEDGED',
+      color: isInvestigating ? 'border-cyan-500 bg-cyan-500/20 text-cyan-400' : 'border-slate-800 bg-slate-900 text-slate-600'
+    },
+    {
+      title: '3. Cognitive AI & Root Cause Correlation',
+      time: formatTime(new Date(createdAtDate.getTime() + 5 * 60000)),
+      actor: 'Gemini Cognitive Root-Cause Engine',
+      desc: incident.analysis?.rootCause || 'Cross-correlating stack traces, metric spikes, and Jaeger dependency graph.',
+      status: isInvestigating ? 'completed' : 'pending',
+      badge: 'DIAGNOSED',
+      color: isInvestigating ? 'border-purple-500 bg-purple-500/20 text-purple-400' : 'border-slate-800 bg-slate-900 text-slate-600'
+    },
+    {
+      title: '4. Executive / NOC Handoff & Escalation',
+      time: formatTime(new Date(createdAtDate.getTime() + 10 * 60000)),
+      actor: 'Sarah Chen (Senior NOC Lead) / PagerDuty',
+      desc: isEscalated 
+        ? 'Escalation triggered. Severity set to CRITICAL. Executive PagerDuty & Slack alerts dispatched.'
+        : 'Standard operational severity. Escalation standing by.',
+      status: isEscalated ? 'completed' : 'standing_by',
+      badge: isEscalated ? 'ESCALATED' : 'STANDBY',
+      color: isEscalated ? 'border-rose-500 bg-rose-500/20 text-rose-400' : 'border-slate-800 bg-slate-900 text-slate-600'
+    },
+    {
+      title: '5. Remediation Patch & Solved',
+      time: formatTime(new Date(createdAtDate.getTime() + 20 * 60000)),
+      actor: incident.lastModifiedBy || 'NOC Engineering',
+      desc: isSolved 
+        ? `Incident resolved and verified. CSAT: ${incident.csatScore}%.`
+        : 'Executing runbook mitigation and code patch...',
+      status: isSolved ? 'completed' : 'in_progress',
+      badge: isSolved ? 'SOLVED' : 'ACTIVE',
+      color: isSolved ? 'border-emerald-500 bg-emerald-500/20 text-emerald-400' : 'border-amber-500 bg-amber-500/20 text-amber-400'
+    }
+  ];
+
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-4 font-sans mb-4">
+      <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+        <div className="flex items-center space-x-2">
+          <Icons.GitCommit className="h-4 w-4 text-indigo-400" />
+          <h3 className="text-xs font-bold font-display uppercase tracking-wider text-white">
+            Incident Lifecycle Status Timeline
+          </h3>
+        </div>
+        <span className="text-[9px] font-mono text-slate-400 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">
+          AUDIT-GRADE VERIFIED
+        </span>
+      </div>
+
+      <div className="relative border-l-2 border-slate-800/80 ml-3 pl-5 space-y-4">
+        {steps.map((step, idx) => (
+          <div key={idx} className="relative group">
+            <div className={`absolute -left-[27px] top-1 h-3.5 w-3.5 rounded-full border-2 bg-slate-950 flex items-center justify-center transition-all ${
+              step.status === 'completed'
+                ? 'border-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]'
+                : step.status === 'in_progress'
+                  ? 'border-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.5)] animate-pulse'
+                  : 'border-slate-700'
+            }`}>
+              <div className={`h-1.5 w-1.5 rounded-full ${step.status === 'completed' ? 'bg-emerald-400' : step.status === 'in_progress' ? 'bg-amber-400 animate-ping' : 'bg-slate-700'}`} />
+            </div>
+
+            <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 p-3 hover:bg-slate-900/60 transition-all">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px] font-bold text-white font-sans">{step.title}</span>
+                <span className={`text-[8px] font-mono font-bold px-1.5 py-0.2 rounded border ${step.color}`}>
+                  {step.badge}
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-300 font-mono leading-relaxed">{step.desc}</p>
+              <div className="mt-2 flex items-center justify-between text-[9px] font-mono text-slate-500 border-t border-slate-800/40 pt-1.5">
+                <span className="flex items-center space-x-1">
+                  <Icons.User className="h-3 w-3 text-slate-500" />
+                  <span>Actor: <strong className="text-slate-400">{step.actor}</strong></span>
+                </span>
+                <span className="flex items-center space-x-1 text-slate-400">
+                  <Icons.Clock className="h-3 w-3" />
+                  <span>{step.time}</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export const calculateSentimentScore = (incident: Incident): { score: number; label: string; color: string } => {
   let score = 70; // Base sentiment score (out of 100, where 100 is happy/neutral, and <50 is frustrated/angry)
@@ -459,6 +578,7 @@ interface IncidentWorkspaceProps {
 }
 
 export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: IncidentWorkspaceProps) {
+  const { uiDensity, playUiSound } = useSupportPilot();
   const [incidents, setIncidents] = useState<Incident[]>(InitialIncidents);
   const [selectedIncident, setSelectedIncident] = useState<Incident>(InitialIncidents[0]);
   
@@ -565,6 +685,202 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
   ]);
   const [insightInputIndex, setInsightInputIndex] = useState<number | null>(null);
   const [insightText, setInsightText] = useState<string>('');
+
+  // --- SNOOZE FEATURE STATE ---
+  const [snoozedIncidents, setSnoozedIncidents] = useState<Record<string, number>>(() => {
+    const saved = localStorage.getItem('supportpilot_snoozed_incidents');
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [showSnoozedOnly, setShowSnoozedOnly] = useState(false);
+
+  // --- CORRELATION MAP & LOGS MODAL STATE ---
+  const [isCorrelationViewOpen, setIsCorrelationViewOpen] = useState(false);
+  const [isCorrelatedLogsOpen, setIsCorrelatedLogsOpen] = useState(false);
+
+  // --- ONE-CLICK ESCALATION HANDLER ---
+  const handleOneClickEscalation = (targetIds?: string[]) => {
+    const idsToEscalate = targetIds && targetIds.length > 0 
+      ? targetIds 
+      : (selectedIncidentIds.length > 0 ? selectedIncidentIds : [selectedIncident.id]);
+
+    const targetAssignee = 'Sarah Chen (L2 Lead)';
+
+    setIncidents(prev => prev.map(inc => {
+      if (idsToEscalate.includes(inc.id)) {
+        return {
+          ...inc,
+          severity: 'CRITICAL',
+          status: 'ESCALATED',
+          assignee: targetAssignee,
+          lastModifiedBy: LOGGED_IN_USER,
+          statusHistory: [
+            ...getStatusHistory(inc),
+            {
+              status: 'ESCALATED',
+              timestamp: new Date().toISOString(),
+              changedBy: LOGGED_IN_USER,
+              message: `One-Click Escalation executed. Severity raised to CRITICAL. Handed off to NOC Lead ${targetAssignee}.`
+            }
+          ]
+        };
+      }
+      return inc;
+    }));
+
+    if (idsToEscalate.includes(selectedIncident.id)) {
+      setSelectedIncident(prev => ({
+        ...prev,
+        severity: 'CRITICAL',
+        status: 'ESCALATED',
+        assignee: targetAssignee,
+        lastModifiedBy: LOGGED_IN_USER,
+        statusHistory: [
+          ...getStatusHistory(prev),
+          {
+            status: 'ESCALATED',
+            timestamp: new Date().toISOString(),
+            changedBy: LOGGED_IN_USER,
+            message: `One-Click Escalation executed. Severity raised to CRITICAL. Handed off to NOC Lead ${targetAssignee}.`
+          }
+        ]
+      }));
+    }
+
+    if (playUiSound) playUiSound('ding');
+
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { 
+        message: `⚡ One-Click Escalation Executed! Set CRITICAL status, assigned Sarah Chen (L2 Lead), and dispatched PagerDuty & Slack webhooks for ${idsToEscalate.length} case(s).` 
+      }
+    }));
+
+    if (onAddAuditLog) {
+      onAddAuditLog(LOGGED_IN_USER, 'One-Click Escalation', 'Incident Workspace', 'SUCCESS', `Escalated ${idsToEscalate.join(', ')} to Sarah Chen (L2 Lead)`);
+    }
+
+    setSelectedIncidentIds([]);
+  };
+
+  // Workflow Keybinding Listener (E = Escalate, A = Acknowledge, R = Resolve, S = Snooze, L = Correlated Logs)
+  useEffect(() => {
+    const handleKeydown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
+        return;
+      }
+      
+      let keymap = DEFAULT_WORKFLOW_KEYMAP;
+      try {
+        const saved = localStorage.getItem('supportpilot_workflow_keymap');
+        if (saved) keymap = JSON.parse(saved);
+      } catch (err) {}
+
+      const keyUpper = e.key.toUpperCase();
+
+      if (keyUpper === (keymap.escalate || 'E').toUpperCase()) {
+        e.preventDefault();
+        handleOneClickEscalation();
+      } else if (keyUpper === (keymap.acknowledge || 'A').toUpperCase()) {
+        e.preventDefault();
+        const targetIds = selectedIncidentIds.length > 0 ? selectedIncidentIds : [selectedIncident.id];
+        setIncidents(prev => prev.map(inc => targetIds.includes(inc.id) ? { ...inc, status: 'INVESTIGATING', assignee: LOGGED_IN_USER } : inc));
+        if (targetIds.includes(selectedIncident.id)) {
+          setSelectedIncident(prev => ({ ...prev, status: 'INVESTIGATING', assignee: LOGGED_IN_USER }));
+        }
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Acknowledged & set status to INVESTIGATING for ${targetIds.length} incident(s).` } }));
+      } else if (keyUpper === (keymap.resolve || 'R').toUpperCase()) {
+        e.preventDefault();
+        handleOpenQuickResolution(selectedIncident);
+      } else if (keyUpper === (keymap.snooze || 'S').toUpperCase() && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        const targetIds = selectedIncidentIds.length > 0 ? selectedIncidentIds : [selectedIncident.id];
+        handleSnoozeIncidents(targetIds, '1h');
+      } else if (keyUpper === (keymap.correlated_logs || 'L').toUpperCase() && !e.altKey) {
+        e.preventDefault();
+        setIsCorrelatedLogsOpen(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeydown);
+    return () => window.removeEventListener('keydown', handleKeydown);
+  }, [selectedIncident, selectedIncidentIds]);
+
+  useEffect(() => {
+    localStorage.setItem('supportpilot_snoozed_incidents', JSON.stringify(snoozedIncidents));
+  }, [snoozedIncidents]);
+
+  // Interval check to auto-restore snoozed incidents
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setSnoozedIncidents(prev => {
+        let changed = false;
+        const next = { ...prev };
+        Object.keys(next).forEach(id => {
+          if (next[id] <= now) {
+            delete next[id];
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleSnoozeIncidents = (targetIds: string[], durationStr: string) => {
+    let ms = 3600000;
+    if (durationStr === '15m') ms = 15 * 60 * 1000;
+    else if (durationStr === '1h') ms = 60 * 60 * 1000;
+    else if (durationStr === '4h') ms = 4 * 60 * 60 * 1000;
+    else if (durationStr === '8h') ms = 8 * 60 * 60 * 1000;
+    else if (durationStr === '24h') ms = 24 * 60 * 60 * 1000;
+
+    const expiry = Date.now() + ms;
+    setSnoozedIncidents(prev => {
+      const next = { ...prev };
+      targetIds.forEach(id => { next[id] = expiry; });
+      return next;
+    });
+
+    setSelectedIncidentIds([]);
+    if (playUiSound) playUiSound('archive');
+    
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `Snoozed ${targetIds.length} incident(s) for ${durationStr}. Hidden from active triage list.` }
+    }));
+
+    if (onAddAuditLog) {
+      onAddAuditLog(LOGGED_IN_USER, 'Snooze Bulk Incidents', 'Workspace', 'SUCCESS', `Snoozed ${targetIds.join(', ')} for ${durationStr}`);
+    }
+  };
+
+  const handleUnSnoozeIncident = (id: string) => {
+    setSnoozedIncidents(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `Restored incident ${id} back to active queue.` }
+    }));
+  };
+
+  // Listen for custom events
+  useEffect(() => {
+    const handleToggleCorrelation = () => setIsCorrelationViewOpen(prev => !prev);
+    const handleTriggerSnooze = () => {
+      if (selectedIncidentIds.length > 0) {
+        handleSnoozeIncidents(selectedIncidentIds, '1h');
+      }
+    };
+    window.addEventListener('toggle-correlation-view', handleToggleCorrelation);
+    window.addEventListener('trigger-snooze-bulk', handleTriggerSnooze);
+    return () => {
+      window.removeEventListener('toggle-correlation-view', handleToggleCorrelation);
+      window.removeEventListener('trigger-snooze-bulk', handleTriggerSnooze);
+    };
+  }, [selectedIncidentIds]);
 
   // Open Quick Resolution Wizard
   const handleOpenQuickResolution = (inc?: Incident) => {
@@ -1222,6 +1538,13 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
         } else {
           return selectedTags.some(t => incTags.includes(t));
         }
+      })
+      .filter((inc) => {
+        const isSnoozed = (snoozedIncidents[inc.id] || 0) > Date.now();
+        if (showSnoozedOnly) {
+          return isSnoozed;
+        }
+        return !isSnoozed;
       });
 
     if (sortByPriority) {
@@ -1698,18 +2021,22 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
       logAction = "Batch Assign Tickets";
       logPayload = `Assigned selected incidents (${targetIds.join(', ')}) to ${value}`;
       toastMsg = `Successfully assigned ${targetIds.length} tickets to ${value}.`;
+      playUiSound('assign');
     } else if (type === 'STATUS') {
       logAction = "Batch Update Status";
       logPayload = `Updated selected incidents (${targetIds.join(', ')}) status to ${value}`;
       toastMsg = `Updated status to ${value} for ${targetIds.length} tickets.`;
+      playUiSound('ding');
     } else if (type === 'REPRIORITIZE') {
       logAction = "Batch Reprioritize";
       logPayload = `Updated selected incidents (${targetIds.join(', ')}) severity to ${value}`;
       toastMsg = `Reprioritized ${targetIds.length} tickets to ${value}.`;
+      playUiSound('ding');
     } else if (type === 'RESOLVE_ALL') {
       logAction = "Batch Resolve Tickets";
       logPayload = `Resolved selected incidents (${targetIds.join(', ')}) via batch resolution execution.`;
       toastMsg = `Resolved ${targetIds.length} selected tickets successfully.`;
+      playUiSound('archive');
     }
 
     onAddAuditLog(
@@ -3173,8 +3500,13 @@ Generated by SupportPilot AI Platform.
     return true;
   });
 
+  const workspaceDensityClass = 
+    uiDensity === 'compact' ? 'space-y-2 text-xs p-1' :
+    uiDensity === 'spacious' ? 'space-y-5 text-sm p-3' :
+    'space-y-3.5 text-xs';
+
   return (
-    <div className="flex flex-col h-[calc(100vh-130px)] space-y-3.5 text-xs font-sans overflow-hidden">
+    <div className={`flex flex-col h-[calc(100vh-130px)] font-sans overflow-hidden ${workspaceDensityClass}`}>
       {/* 0. TOP-LEVEL METADATA SUMMARY HEADER */}
       <IncidentSummary
         incidents={incidents}
@@ -3274,6 +3606,32 @@ Generated by SupportPilot AI Platform.
           >
             <Icons.CheckSquare className="h-3.5 w-3.5" />
             <span className="text-[10px]">Bulk</span>
+          </button>
+
+          {/* Snooze Filter Toggle */}
+          <button
+            onClick={() => setShowSnoozedOnly(!showSnoozedOnly)}
+            className={`flex-1 flex items-center justify-center space-x-1 rounded-lg py-1.5 px-2 border transition-all cursor-pointer ${
+              showSnoozedOnly
+                ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 font-bold'
+                : 'bg-slate-900/40 border-slate-900 text-slate-400 hover:text-white hover:border-slate-800'
+            }`}
+            title="Toggle View of Snoozed Incidents"
+          >
+            <Icons.Clock className="h-3.5 w-3.5 text-amber-400" />
+            <span className="text-[10px]">
+              Snoozed ({Object.keys(snoozedIncidents).filter(k => snoozedIncidents[k] > Date.now()).length})
+            </span>
+          </button>
+
+          {/* Correlation Map Button */}
+          <button
+            onClick={() => setIsCorrelationViewOpen(true)}
+            className="flex items-center space-x-1 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 py-1.5 px-2 text-[10px] font-bold transition-all cursor-pointer"
+            title="Open Interactive Incident Correlation Map"
+          >
+            <Icons.Network className="h-3.5 w-3.5 text-cyan-400" />
+            <span>Map</span>
           </button>
 
           <button
@@ -3626,6 +3984,86 @@ Generated by SupportPilot AI Platform.
               </button>
             </div>
           </div>
+        )}
+
+        {/* ENHANCED BULK ACTION TOOLBAR WITH SHIMMER/PULSE ANIMATIONS */}
+        {selectedIncidentIds.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="mb-3 p-2.5 rounded-xl border border-indigo-500/40 bg-slate-950/95 shadow-2xl backdrop-blur-md flex flex-wrap items-center justify-between gap-2 font-mono text-xs"
+          >
+            <div className="flex items-center space-x-2">
+              <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping" />
+              <span className="font-bold text-white text-[11px]">
+                {selectedIncidentIds.length} Selected
+              </span>
+              <button
+                onClick={() => setSelectedIncidentIds([])}
+                className="text-[9px] text-slate-400 hover:text-white underline cursor-pointer"
+              >
+                Deselect
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+              {/* One-Click Escalation Button */}
+              <button
+                onClick={() => handleOneClickEscalation(selectedIncidentIds)}
+                className="group relative flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-rose-500/50 bg-rose-950/60 hover:bg-rose-900 text-rose-200 font-bold shadow-lg shadow-rose-500/20 transition-all cursor-pointer animate-pulse"
+                title="Set CRITICAL status, assign NOC Lead Sarah Chen, dispatch PagerDuty alert (E)"
+              >
+                <Icons.AlertOctagon className="h-3.5 w-3.5 text-rose-400 group-hover:scale-110 transition-transform animate-pulse" />
+                <span>Escalate (E)</span>
+              </button>
+
+              {/* Snooze Button */}
+              <div className="relative group/snooze-menu">
+                <button
+                  className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-amber-500/40 bg-amber-950/40 hover:bg-amber-900/60 text-amber-300 font-bold shadow-md transition-all cursor-pointer"
+                  title="Snooze selected incidents for set duration (S)"
+                >
+                  <Icons.Clock className="h-3.5 w-3.5 text-amber-400 group-hover:rotate-12 transition-transform animate-pulse" />
+                  <span>Snooze (S)</span>
+                </button>
+                <div className="absolute left-0 top-full mt-1 hidden group-hover/snooze-menu:block z-50 bg-slate-950 border border-slate-800 rounded-lg shadow-2xl p-1.5 space-y-1 whitespace-nowrap min-w-[110px]">
+                  {['15m', '1h', '4h', '8h', '24h'].map(dur => (
+                    <button
+                      key={dur}
+                      onClick={() => handleSnoozeIncidents(selectedIncidentIds, dur)}
+                      className="w-full text-left px-2.5 py-1 rounded hover:bg-slate-800 text-[10px] text-slate-300 font-bold cursor-pointer"
+                    >
+                      Snooze {dur}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* View Correlated Logs Button */}
+              <button
+                onClick={() => setIsCorrelatedLogsOpen(true)}
+                className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-cyan-500/40 bg-cyan-950/40 hover:bg-cyan-900/60 text-cyan-300 font-bold shadow-md transition-all cursor-pointer"
+                title="View Correlated Logs Stream (L)"
+              >
+                <Icons.FileText className="h-3.5 w-3.5 text-cyan-400 group-hover:scale-110 transition-transform animate-pulse" />
+                <span>Logs (L)</span>
+              </button>
+
+              {/* Acknowledge Bulk Button */}
+              <button
+                onClick={() => {
+                  setIncidents(prev => prev.map(inc => selectedIncidentIds.includes(inc.id) ? { ...inc, status: 'INVESTIGATING', assignee: LOGGED_IN_USER } : inc));
+                  setSelectedIncidentIds([]);
+                  window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Acknowledged ${selectedIncidentIds.length} incident(s).` } }));
+                }}
+                className="group flex items-center space-x-1 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300 font-bold transition-all cursor-pointer"
+              >
+                <Icons.CheckCircle2 className="h-3.5 w-3.5 text-indigo-400 group-hover:scale-110 transition-transform" />
+                <span>Ack</span>
+              </button>
+            </div>
+          </motion.div>
         )}
 
         <div className="flex-1 space-y-2.5 overflow-y-auto pr-1">
@@ -4044,6 +4482,26 @@ Generated by SupportPilot AI Platform.
                 >
                   <Icons.Share2 className="h-2.5 w-2.5" />
                   <span>Share</span>
+                </button>
+
+                <button
+                  id="btn-view-correlated-logs"
+                  onClick={() => setIsCorrelatedLogsOpen(true)}
+                  className="flex items-center space-x-1 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 hover:text-white transition-all rounded px-1.5 py-0.5 font-mono text-[9.5px] font-bold cursor-pointer"
+                  title="View Correlated Logs within ±5m window (L)"
+                >
+                  <Icons.FileText className="h-2.5 w-2.5 text-cyan-400" />
+                  <span>Correlated Logs (L)</span>
+                </button>
+
+                <button
+                  id="btn-one-click-escalate"
+                  onClick={() => handleOneClickEscalation()}
+                  className="flex items-center space-x-1 border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 hover:text-white transition-all rounded px-1.5 py-0.5 font-mono text-[9.5px] font-bold cursor-pointer animate-pulse"
+                  title="One-Click Escalation to CRITICAL & NOC Lead (E)"
+                >
+                  <Icons.AlertTriangle className="h-2.5 w-2.5 text-rose-400" />
+                  <span>Escalate (E)</span>
                 </button>
 
                 <span>•</span>
@@ -5363,6 +5821,8 @@ Generated by SupportPilot AI Platform.
           {/* TAB 9: STATUS HISTORY TIMELINE */}
           {telemetryTab === 'status_history' && (
             <div className="space-y-4">
+              <IncidentStatusTimeline incident={selectedIncident} />
+
               <div className="flex items-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-800/50 pb-3">
                 <div>
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-1.5">
@@ -6230,6 +6690,29 @@ Generated by SupportPilot AI Platform.
                 </div>
               </div>
 
+              {/* Batch Snooze Dropdown */}
+              <div className="relative shrink-0">
+                <select
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (!val) return;
+                    handleSnoozeIncidents(selectedIncidentIds, val);
+                    e.target.value = "";
+                  }}
+                  className="bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 rounded-lg border border-amber-500/50 text-[10px] py-1.5 px-2.5 appearance-none focus:outline-none focus:border-amber-400 cursor-pointer transition-all pr-6 font-bold"
+                >
+                  <option value="">Snooze Selected...</option>
+                  <option value="15m">Snooze 15m</option>
+                  <option value="1h">Snooze 1h</option>
+                  <option value="4h">Snooze 4h</option>
+                  <option value="8h">Snooze 8h</option>
+                  <option value="24h">Snooze 24h</option>
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-amber-400">
+                  <Icons.Clock className="h-3 w-3" />
+                </div>
+              </div>
+
               {/* Resolve All Quickly Button */}
               <button
                 onClick={() => {
@@ -6861,6 +7344,209 @@ Generated by SupportPilot AI Platform.
           </div>
         )}
       </AnimatePresence>
+
+      {/* INCIDENT CORRELATION MAP MODAL */}
+      <AnimatePresence>
+        {isCorrelationViewOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-5xl rounded-2xl border border-indigo-500/30 bg-slate-950 p-6 shadow-2xl space-y-4 max-h-[90vh] flex flex-col"
+            >
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center space-x-2">
+                  <div className="h-8 w-8 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 flex items-center justify-center">
+                    <Icons.Network className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-white font-display uppercase tracking-wider">
+                      Incident Correlation Graph
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-mono">
+                      Visual topology connecting incidents by shared tags, services, cluster IDs, and alert descriptions.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setIsCorrelationViewOpen(false)}
+                  className="rounded-lg p-2 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <Icons.X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="flex-1 min-h-[480px]">
+                <IncidentCorrelationMap
+                  incidents={incidents}
+                  selectedIncidentId={selectedIncident.id}
+                  onSelectIncident={(inc) => {
+                    setSelectedIncident(inc);
+                    setIsCorrelationViewOpen(false);
+                  }}
+                />
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* CORRELATED LOGS MODAL */}
+      <AnimatePresence>
+        {isCorrelatedLogsOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-4xl rounded-2xl border border-cyan-500/30 bg-slate-950 p-6 shadow-2xl space-y-4 max-h-[90vh] flex flex-col font-sans"
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center space-x-3">
+                  <div className="h-9 w-9 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 flex items-center justify-center">
+                    <Icons.FileText className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <h3 className="font-bold text-sm text-white font-display uppercase tracking-wider">
+                        Correlated Log Stream
+                      </h3>
+                      <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold">
+                        ±5-Min Time Window
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-mono">
+                      Showing logs for microservice <strong className="text-white">{selectedIncident.appName}</strong> & tags <span className="text-indigo-400">#{getIncidentTags(selectedIncident).slice(0, 3).join(', #')}</span> within ±5m window ({selectedIncident.createdAt.slice(11, 19)})
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setIsCorrelatedLogsOpen(false)}
+                  className="rounded-lg p-2 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <Icons.X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* Visual Log Correlation Chart */}
+              <div className="shrink-0">
+                <LogCorrelationChart logs={selectedIncident.logs || []} />
+              </div>
+
+              {/* Search & Filter Toolbar */}
+              <div className="flex items-center justify-between gap-3 bg-slate-900/50 p-2.5 rounded-xl border border-slate-800 shrink-0">
+                <div className="flex-1 flex items-center space-x-2 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
+                  <Icons.Search className="h-4 w-4 text-slate-500" />
+                  <input
+                    type="text"
+                    placeholder="Search log messages, stack traces, pod IDs..."
+                    value={logSearch}
+                    onChange={(e) => setLogSearch(e.target.value)}
+                    className="w-full bg-transparent text-xs text-slate-200 placeholder-slate-600 outline-none font-mono"
+                  />
+                  {logSearch && (
+                    <button onClick={() => setLogSearch('')} className="text-slate-500 hover:text-white">
+                      <Icons.X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center space-x-2 font-mono text-[10px]">
+                  {['ALL', 'FATAL', 'ERROR', 'WARN', 'INFO'].map((level) => (
+                    <button
+                      key={level}
+                      onClick={() => setLogFilter(level as any)}
+                      className={`px-2.5 py-1 rounded-lg border font-bold transition-all cursor-pointer ${
+                        logFilter === level
+                          ? 'bg-cyan-600 text-white border-cyan-400'
+                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      {level}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Correlated Log Lines */}
+              <div className="flex-1 overflow-y-auto space-y-2 font-mono text-[11px] pr-1 custom-scrollbar min-h-[160px]">
+                {filteredLogs.length > 0 ? (
+                  filteredLogs.map((log, idx) => (
+                    <div
+                      key={idx}
+                      className={`rounded-lg border p-2.5 space-y-1 transition-all ${
+                        log.level === 'FATAL' || log.level === 'ERROR'
+                          ? 'border-rose-500/30 bg-rose-950/20 text-rose-200'
+                          : log.level === 'WARN'
+                            ? 'border-amber-500/30 bg-amber-950/20 text-amber-200'
+                            : 'border-slate-800/80 bg-slate-900/40 text-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between text-[9px] text-slate-400">
+                        <div className="flex items-center space-x-2">
+                          <span className="font-bold text-white">{log.timestamp}</span>
+                          <span>•</span>
+                          <span className="text-cyan-400 font-bold">{log.source}</span>
+                        </div>
+                        <span className={`px-1.5 py-0.2 rounded border font-bold text-[8px] uppercase ${
+                          log.level === 'FATAL' || log.level === 'ERROR'
+                            ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                            : log.level === 'WARN'
+                              ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                              : 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40'
+                        }`}>
+                          {log.level}
+                        </span>
+                      </div>
+                      <div className="break-words select-text font-mono leading-relaxed">
+                        {log.message}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="p-8 text-center text-slate-500 font-mono text-xs">
+                    No correlated logs found matching filter criteria in the ±5-minute window.
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="border-t border-slate-800 pt-3 flex items-center justify-between text-xs font-mono">
+                <span className="text-slate-400">
+                  Found <strong className="text-white">{filteredLogs.length}</strong> correlated entries in ±5m window
+                </span>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(JSON.stringify(filteredLogs, null, 2));
+                      window.dispatchEvent(new CustomEvent('show-toast', {
+                        detail: { message: 'Correlated logs copied to clipboard as JSON!' }
+                      }));
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300 font-bold transition-all cursor-pointer flex items-center space-x-1.5"
+                  >
+                    <Icons.Copy className="h-3.5 w-3.5 text-indigo-400" />
+                    <span>Copy Log JSON</span>
+                  </button>
+                  <button
+                    onClick={() => setIsCorrelatedLogsOpen(false)}
+                    className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-all cursor-pointer"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Contextual Keyboard Shortcut Bar Overlay */}
+      <ContextualShortcutBar />
 
     </div>
     </div>

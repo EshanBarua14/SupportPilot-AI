@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as Icons from 'lucide-react';
 
@@ -8,10 +8,62 @@ interface ShortcutsModalProps {
   activeTab?: string;
 }
 
+export interface WorkflowKeymap {
+  escalate: string;
+  acknowledge: string;
+  resolve: string;
+  snooze: string;
+  correlated_logs: string;
+}
+
+export const DEFAULT_WORKFLOW_KEYMAP: WorkflowKeymap = {
+  escalate: 'E',
+  acknowledge: 'A',
+  resolve: 'R',
+  snooze: 'S',
+  correlated_logs: 'L',
+};
+
 export default function ShortcutsModal({ isOpen, onClose, activeTab }: ShortcutsModalProps) {
-  // Prevent propagation for inner clicks
+  const [workflowKeymap, setWorkflowKeymap] = useState<WorkflowKeymap>(() => {
+    try {
+      const saved = localStorage.getItem('supportpilot_workflow_keymap');
+      return saved ? JSON.parse(saved) : DEFAULT_WORKFLOW_KEYMAP;
+    } catch (e) {
+      return DEFAULT_WORKFLOW_KEYMAP;
+    }
+  });
+
+  const [editingKey, setEditingKey] = useState<keyof WorkflowKeymap | null>(null);
+
   const handleInnerClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+  };
+
+  const saveKeymap = (newKeymap: WorkflowKeymap) => {
+    setWorkflowKeymap(newKeymap);
+    try {
+      localStorage.setItem('supportpilot_workflow_keymap', JSON.stringify(newKeymap));
+      window.dispatchEvent(new CustomEvent('workflow-keymap-updated', { detail: newKeymap }));
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: 'Updated Incident Workspace workflow keybindings!' }
+      }));
+    } catch (e) {
+      console.error('Failed to save keymap:', e);
+    }
+  };
+
+  const handleResetDefaults = () => {
+    saveKeymap(DEFAULT_WORKFLOW_KEYMAP);
+  };
+
+  const handleKeyRebind = (actionKey: keyof WorkflowKeymap, newKeyRaw: string) => {
+    const keyUpper = newKeyRaw.trim().toUpperCase();
+    if (!keyUpper) return;
+    const nextKey = keyUpper.slice(-1); // Take single character
+    const updated = { ...workflowKeymap, [actionKey]: nextKey };
+    saveKeymap(updated);
+    setEditingKey(null);
   };
 
   const getTabSpecificShortcuts = (tab?: string) => {
@@ -95,6 +147,14 @@ export default function ShortcutsModal({ isOpen, onClose, activeTab }: Shortcuts
 
   const shortcutGroups = tabGroup ? [tabGroup, ...baseShortcutGroups] : baseShortcutGroups;
 
+  const WORKFLOW_ITEMS: Array<{ id: keyof WorkflowKeymap; label: string; desc: string; icon: any; color: string }> = [
+    { id: 'escalate', label: 'One-Click Escalation', desc: 'Set CRITICAL, assign NOC Lead, dispatch PagerDuty/Slack', icon: Icons.Zap, color: 'text-rose-400 bg-rose-500/10 border-rose-500/30' },
+    { id: 'acknowledge', label: 'Acknowledge Triage', desc: 'Set status to INVESTIGATING and assign active engineer', icon: Icons.UserCheck, color: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/30' },
+    { id: 'resolve', label: 'Quick Resolution', desc: 'Open Quick Resolve wizard or set status to SOLVED', icon: Icons.CheckCircle2, color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' },
+    { id: 'snooze', label: 'Snooze Incident', desc: 'Snooze active/selected incident for 1 hour', icon: Icons.Clock, color: 'text-amber-400 bg-amber-500/10 border-amber-500/30' },
+    { id: 'correlated_logs', label: 'View Correlated Logs', desc: 'Open modal with 5-min log stream for active app/tag', icon: Icons.FileText, color: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/30' },
+  ];
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -109,23 +169,23 @@ export default function ShortcutsModal({ isOpen, onClose, activeTab }: Shortcuts
             exit={{ opacity: 0, scale: 0.95, y: 15 }}
             transition={{ type: 'spring', stiffness: 350, damping: 26 }}
             onClick={handleInnerClick}
-            className="w-full max-w-xl overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl text-xs font-sans"
+            className="w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl text-xs font-sans"
             id="shortcuts-modal-content"
           >
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-800 bg-slate-950/60 px-5 py-4">
               <div className="flex items-center space-x-2.5">
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
                   <Icons.Keyboard className="h-4 w-4" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-display font-bold text-white leading-tight">Keyboard Shortcuts & Accessibility</h3>
-                  <p className="text-[10px] text-slate-400 leading-normal">Interactive console HUD controls for SupportPilot AI system engineers</p>
+                  <h3 className="text-sm font-display font-bold text-white leading-tight">Keyboard Shortcuts & Workflow Keymapping</h3>
+                  <p className="text-[10px] text-slate-400 leading-normal">Interactive console HUD controls & custom incident workspace keybindings</p>
                 </div>
               </div>
               <button 
                 onClick={onClose}
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
                 aria-label="Close modal"
               >
                 <Icons.X className="h-4 w-4" />
@@ -133,7 +193,96 @@ export default function ShortcutsModal({ isOpen, onClose, activeTab }: Shortcuts
             </div>
 
             {/* Content Groups */}
-            <div className="p-5 space-y-5 max-h-[70vh] overflow-y-auto">
+            <div className="p-5 space-y-6 max-h-[75vh] overflow-y-auto">
+              
+              {/* WORKFLOW SHORTCUTS SECTION */}
+              <div className="rounded-xl border border-indigo-500/30 bg-indigo-950/20 p-4 space-y-3 shadow-inner">
+                <div className="flex items-center justify-between border-b border-indigo-500/20 pb-2.5">
+                  <div className="flex items-center space-x-2">
+                    <div className="p-1 rounded bg-indigo-500/20 text-indigo-300">
+                      <Icons.Workflow className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-display font-bold uppercase tracking-wider text-white flex items-center gap-1.5">
+                        <span>Workflow Shortcuts (Incident Workspace)</span>
+                        <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Customizable</span>
+                      </h4>
+                      <p className="text-[10px] text-slate-400 font-mono">
+                        Direct single-key actions when viewing incidents (E = Escalate, A = Acknowledge, R = Resolve, etc.)
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleResetDefaults}
+                    className="text-[9.5px] font-mono text-indigo-300 hover:text-white hover:underline flex items-center space-x-1 bg-indigo-900/40 hover:bg-indigo-900/70 px-2 py-1 rounded border border-indigo-500/30 transition-all cursor-pointer"
+                    title="Reset workflow keybindings back to default E, A, R, S, L"
+                  >
+                    <Icons.RotateCcw className="h-3 w-3" />
+                    <span>Reset Defaults</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                  {WORKFLOW_ITEMS.map((item) => {
+                    const ItemIcon = item.icon;
+                    const mappedKey = workflowKeymap[item.id] || DEFAULT_WORKFLOW_KEYMAP[item.id];
+                    const isEditing = editingKey === item.id;
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 p-2.5 hover:bg-slate-950/90 transition-colors"
+                      >
+                        <div className="flex items-start space-x-2 min-w-0 pr-2">
+                          <div className={`p-1.5 rounded-lg border shrink-0 ${item.color}`}>
+                            <ItemIcon className="h-3.5 w-3.5" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-bold text-white leading-tight truncate">{item.label}</div>
+                            <div className="text-[9.5px] text-slate-400 font-sans leading-tight mt-0.5 line-clamp-1">{item.desc}</div>
+                          </div>
+                        </div>
+
+                        {/* Interactive Key Binding Badge / Rebind Input */}
+                        <div className="shrink-0 font-mono">
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              maxLength={1}
+                              autoFocus
+                              placeholder={mappedKey}
+                              defaultValue={mappedKey}
+                              onBlur={(e) => handleKeyRebind(item.id, e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  handleKeyRebind(item.id, e.currentTarget.value);
+                                } else if (e.key === 'Escape') {
+                                  setEditingKey(null);
+                                }
+                              }}
+                              className="w-8 h-7 text-center rounded border border-indigo-500 bg-indigo-950 text-amber-300 text-xs font-bold font-mono outline-none focus:ring-1 focus:ring-indigo-400 uppercase"
+                            />
+                          ) : (
+                            <button
+                              onClick={() => setEditingKey(item.id)}
+                              className="group flex items-center space-x-1 rounded border border-indigo-500/40 bg-slate-900 hover:bg-indigo-600/30 hover:border-indigo-400 px-2 py-1 transition-all cursor-pointer"
+                              title="Click to change shortcut key"
+                            >
+                              <kbd className="text-[10px] font-mono font-extrabold text-amber-300">
+                                {mappedKey}
+                              </kbd>
+                              <Icons.Edit2 className="h-2.5 w-2.5 text-slate-500 group-hover:text-indigo-300 transition-colors" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Standard Shortcut Groups */}
               {shortcutGroups.map((group, groupIdx) => {
                 const GroupIcon = group.icon;
                 return (
@@ -143,14 +292,14 @@ export default function ShortcutsModal({ isOpen, onClose, activeTab }: Shortcuts
                       <span>{group.title}</span>
                     </h4>
                     
-                    <div className="grid grid-cols-1 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       {group.shortcuts.map((shortcut, idx) => (
                         <div 
                           key={idx} 
-                          className="flex items-center justify-between rounded-lg border border-slate-800/60 bg-slate-950/30 px-3 py-2.5 hover:bg-slate-950/65 transition-colors"
+                          className="flex items-center justify-between rounded-lg border border-slate-800/60 bg-slate-950/30 px-3 py-2 hover:bg-slate-950/65 transition-colors"
                         >
                           <span className="text-[11px] text-slate-300 font-medium">{shortcut.desc}</span>
-                          <div className="flex items-center space-x-1 font-mono">
+                          <div className="flex items-center space-x-1 font-mono shrink-0 ml-2">
                             {shortcut.keys.map((key, keyIdx) => (
                               <React.Fragment key={keyIdx}>
                                 {keyIdx > 0 && <span className="text-[9px] text-slate-500 px-0.5">+</span>}
@@ -182,3 +331,4 @@ export default function ShortcutsModal({ isOpen, onClose, activeTab }: Shortcuts
     </AnimatePresence>
   );
 }
+

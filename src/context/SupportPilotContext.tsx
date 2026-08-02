@@ -66,6 +66,9 @@ export interface SupportPilotContextType {
   hasSearchResults: boolean;
   isSystemFrozen: boolean;
   setIsSystemFrozen: (frozen: boolean) => void;
+  uiSoundsEnabled: boolean;
+  setUiSoundsEnabled: (enabled: boolean) => void;
+  playUiSound: (type: 'click' | 'ding' | 'assign' | 'archive' | 'success') => void;
   currentUser: AuthUser;
   setCurrentUser: React.Dispatch<React.SetStateAction<AuthUser>>;
   isAuthModalOpen: boolean;
@@ -175,6 +178,71 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
   const [isLocked, setIsLocked] = useState<boolean>(() => {
     return !localStorage.getItem('supportpilot_session_token');
   });
+
+  // UI Sound Effects State & Synthesis
+  const [uiSoundsEnabled, setUiSoundsEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem('supportpilot_uisounds_enabled');
+    return saved !== null ? JSON.parse(saved) : true;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('supportpilot_uisounds_enabled', JSON.stringify(uiSoundsEnabled));
+  }, [uiSoundsEnabled]);
+
+  const playUiSound = useCallback((type: 'click' | 'ding' | 'assign' | 'archive' | 'success') => {
+    if (!uiSoundsEnabled) return;
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const ctx = new AudioContextClass();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      if (type === 'click') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(600, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(300, ctx.currentTime + 0.03);
+        gain.gain.setValueAtTime(0.03, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.03);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.03);
+      } else if (type === 'assign') {
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
+        osc.frequency.setValueAtTime(659.25, ctx.currentTime + 0.04); // E5
+        gain.gain.setValueAtTime(0.05, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.1);
+      } else if (type === 'archive') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+        osc.frequency.exponentialRampToValueAtTime(293.66, ctx.currentTime + 0.08); // D4
+        gain.gain.setValueAtTime(0.04, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.09);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.09);
+      } else if (type === 'ding' || type === 'success') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1046.5, ctx.currentTime); // C6
+        osc.frequency.exponentialRampToValueAtTime(1318.51, ctx.currentTime + 0.06); // E6
+        gain.gain.setValueAtTime(0.05, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.12);
+      }
+    } catch (e) {
+      // Ignore audio synthesis errors
+    }
+  }, [uiSoundsEnabled]);
 
   const [secondsRemaining, setSecondsRemaining] = useState<number>(900); // 15 mins = 900s
   const [themeSuggestion, setThemeSuggestion] = useState<string | null>(null);
@@ -664,6 +732,9 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
         hasSearchResults,
         isSystemFrozen,
         setIsSystemFrozen,
+        uiSoundsEnabled,
+        setUiSoundsEnabled,
+        playUiSound,
         currentUser,
         setCurrentUser,
         isAuthModalOpen,
