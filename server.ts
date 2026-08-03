@@ -33,33 +33,54 @@ function getAiClient() {
 // Helper to call Gemini generateContent with automatic fallback models if primary model is unavailable or overloaded (503/429)
 async function generateContentWithFallback(ai: any, params: { model: string; contents: any; config?: any }) {
   const reqModel = params.model;
-  const primaryModel = (reqModel === 'gemini-3.5-flash' || reqModel === 'gemini-2.5-flash' || reqModel === 'gemini-1.5-flash')
-    ? 'gemini-3.6-flash'
-    : (reqModel === 'gemini-2.5-pro' ? 'gemini-3.1-pro-preview' : (reqModel || 'gemini-3.6-flash'));
+  let primaryModel = reqModel || 'gemini-3.6-flash';
+  if (['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-3.5-flash'].includes(primaryModel)) {
+    primaryModel = 'gemini-3.6-flash';
+  } else if (['gemini-1.5-pro', 'gemini-2.0-pro', 'gemini-2.5-pro'].includes(primaryModel)) {
+    primaryModel = 'gemini-3.1-pro-preview';
+  }
 
   const modelsToTry = Array.from(new Set([
     primaryModel,
     'gemini-3.6-flash',
-    'gemini-2.5-flash',
-    'gemini-3.1-pro-preview',
-    'gemini-2.5-pro',
-    'gemini-1.5-flash'
+    'gemini-flash-latest',
+    'gemini-3.1-flash-lite',
+    'gemini-3.1-pro-preview'
   ].filter(Boolean)));
 
   let lastError: any = null;
-  for (const modelCandidate of modelsToTry) {
-    try {
-      const response = await ai.models.generateContent({
-        ...params,
-        model: modelCandidate,
-      });
-      return response;
-    } catch (err: any) {
-      console.warn(`Gemini API call with model ${modelCandidate} failed (${err?.status || err?.message || err}). Trying fallback model...`);
-      lastError = err;
-      if (err?.message?.includes('GEMINI_API_KEY') || err?.status === 401) {
-        throw err;
+  for (let attempt = 0; attempt < modelsToTry.length; attempt++) {
+    const modelCandidate = modelsToTry[attempt];
+    
+    // Retry up to 2 times for transient errors (503/429/500/504) on the same candidate model before switching
+    for (let retry = 0; retry < 2; retry++) {
+      try {
+        const response = await ai.models.generateContent({
+          ...params,
+          model: modelCandidate,
+        });
+        return response;
+      } catch (err: any) {
+        lastError = err;
+        if (err?.message?.includes('GEMINI_API_KEY') || err?.status === 401) {
+          throw err;
+        }
+
+        const isTransient = err?.status === 503 || err?.status === 429 || err?.status === 500 || err?.status === 504 || (err?.message && (err.message.includes('503') || err.message.includes('overloaded') || err.message.includes('429')));
+        
+        if (isTransient && retry < 1) {
+          // Backoff briefly before retrying same candidate model
+          await new Promise(res => setTimeout(res, 400 * (retry + 1)));
+          continue;
+        }
+
+        console.warn(`Gemini API call with model ${modelCandidate} failed (${err?.status || err?.message || err}). Trying fallback model...`);
+        break;
       }
+    }
+
+    if (attempt < modelsToTry.length - 1) {
+      await new Promise(res => setTimeout(res, 300));
     }
   }
   throw lastError;

@@ -14,6 +14,7 @@ export interface WorkflowKeymap {
   resolve: string;
   snooze: string;
   correlated_logs: string;
+  sla_override: string;
 }
 
 export const DEFAULT_WORKFLOW_KEYMAP: WorkflowKeymap = {
@@ -22,6 +23,7 @@ export const DEFAULT_WORKFLOW_KEYMAP: WorkflowKeymap = {
   resolve: 'R',
   snooze: 'S',
   correlated_logs: 'L',
+  sla_override: 'O',
 };
 
 export default function ShortcutsModal({ isOpen, onClose, activeTab }: ShortcutsModalProps) {
@@ -152,6 +154,7 @@ export default function ShortcutsModal({ isOpen, onClose, activeTab }: Shortcuts
     { id: 'acknowledge', label: 'Acknowledge Triage', desc: 'Set status to INVESTIGATING and assign active engineer', icon: Icons.UserCheck, color: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/30' },
     { id: 'resolve', label: 'Quick Resolution', desc: 'Open Quick Resolve wizard or set status to SOLVED', icon: Icons.CheckCircle2, color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' },
     { id: 'snooze', label: 'Snooze Incident', desc: 'Snooze active/selected incident for 1 hour', icon: Icons.Clock, color: 'text-amber-400 bg-amber-500/10 border-amber-500/30' },
+    { id: 'sla_override', label: 'Apply SLA Override', desc: 'Open SLA Override modal or adjust incident timers (O)', icon: Icons.TimerReset, color: 'text-amber-300 bg-amber-500/10 border-amber-500/30' },
     { id: 'correlated_logs', label: 'View Correlated Logs', desc: 'Open modal with 5-min log stream for active app/tag', icon: Icons.FileText, color: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/30' },
   ];
 

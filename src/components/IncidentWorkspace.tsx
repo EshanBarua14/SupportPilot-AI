@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Incident, LogEntry, TimelineEvent, Tenant } from '../types';
+import { Incident, LogEntry, TimelineEvent, Tenant, SeverityType } from '../types';
 import { InitialIncidents, SeedTenants } from '../data/simulation';
 import * as Icons from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -180,6 +180,43 @@ export const calculateSentimentScore = (incident: Incident): { score: number; la
   } else {
     return { score, label: "Satisfied / Restored", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" };
   }
+};
+
+export const suggestCategory = (incident: Incident): 'Database' | 'Network' | 'API' | 'UI' | 'Infrastructure' | 'Auth' => {
+  if (incident.category) return incident.category;
+  const text = `${incident.title} ${incident.description} ${incident.appName}`.toLowerCase();
+  if (text.includes('db') || text.includes('database') || text.includes('postgres') || text.includes('sql') || text.includes('pool') || text.includes('lock') || text.includes('ledger') || text.includes('redis') || text.includes('cache')) return 'Database';
+  if (text.includes('network') || text.includes('dns') || text.includes('socket') || text.includes('packet') || text.includes('timeout') || text.includes('bgp') || text.includes('gateway')) return 'Network';
+  if (text.includes('api') || text.includes('http') || text.includes('endpoint') || text.includes('500') || text.includes('404') || text.includes('rest') || text.includes('graphql') || text.includes('webhook')) return 'API';
+  if (text.includes('ui') || text.includes('frontend') || text.includes('canvas') || text.includes('react') || text.includes('render') || text.includes('css')) return 'UI';
+  if (text.includes('auth') || text.includes('token') || text.includes('jwt') || text.includes('sso') || text.includes('permission')) return 'Auth';
+  return 'Infrastructure';
+};
+
+export const getServiceHealthAndDeployments = (serviceName: string) => {
+  const name = serviceName || 'Billing Core Service';
+  const hash = name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const versions = ['v2.14.2', 'v2.14.0', 'v1.9.8', 'v3.0.1'];
+  const version = versions[hash % versions.length];
+  const isHealthy = hash % 3 !== 0;
+  const status = isHealthy ? 'OPERATIONAL' : 'DEGRADED';
+  const uptime = isHealthy ? '99.98%' : '98.42%';
+  const deployTime = `${(hash % 45) + 12} mins ago`;
+  const author = hash % 2 === 0 ? 'devops-lead' : 'release-bot';
+  const commitHash = `#${(hash * 997).toString(16).substring(0, 6)}`;
+
+  return {
+    serviceName: name,
+    status,
+    uptime,
+    version,
+    deployTime,
+    author,
+    commitHash,
+    activePods: (hash % 8) + 6,
+    cpuUsage: `${(hash % 35) + 40}%`,
+    memoryUsage: `${(hash % 40) + 45}%`
+  };
 };
 
 export const getIncidentTags = (incident: Incident): string[] => {
@@ -572,6 +609,111 @@ function IncidentLifecycleTimeline({ incident }: { incident: Incident }) {
   );
 }
 
+export function BulkSeveritySparkline({ selectedIncidents }: { selectedIncidents: Incident[] }) {
+  if (selectedIncidents.length === 0) return null;
+
+  const c1 = selectedIncidents.filter(i => i.severity === 'CRITICAL').length;
+  const c2 = selectedIncidents.filter(i => i.severity === 'HIGH').length;
+  const c3 = selectedIncidents.filter(i => i.severity === 'MEDIUM').length;
+  const c4 = selectedIncidents.filter(i => i.severity === 'LOW').length;
+
+  const weights: Record<SeverityType, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
+  const points = selectedIncidents.map(i => weights[i.severity] || 1);
+
+  const maxVal = 4;
+  const minVal = 1;
+  const width = 64;
+  const height = 18;
+
+  const svgPoints = points.length === 1
+    ? `0,${height - (points[0] / maxVal) * height} ${width},${height - (points[0] / maxVal) * height}`
+    : points.map((val, idx) => {
+        const x = (idx / (points.length - 1)) * width;
+        const y = height - ((val - minVal) / (maxVal - minVal || 1)) * (height - 4) - 2;
+        return `${x},${y}`;
+      }).join(' ');
+
+  return (
+    <div className="relative group/sparkline flex items-center space-x-2 bg-slate-900/90 px-2.5 py-1 rounded-lg border border-slate-800 shrink-0 font-mono text-[9.5px] cursor-help">
+      <div className="flex flex-col">
+        <span className="text-[8px] text-slate-400 font-bold uppercase leading-tight">SEV Ratio (1:4)</span>
+        <span className="text-white font-bold leading-tight flex items-center gap-1">
+          <span className={c1 > 0 ? "text-rose-400 font-extrabold" : "text-slate-400"}>{c1}</span>
+          <span className="text-slate-600">:</span>
+          <span className={c4 > 0 ? "text-emerald-400 font-extrabold" : "text-slate-400"}>{c4}</span>
+        </span>
+      </div>
+      <svg className="w-16 h-4 overflow-visible shrink-0" viewBox={`0 0 ${width} ${height}`}>
+        <polyline
+          fill="none"
+          stroke={c1 > 0 ? "#f43f5e" : "#6366f1"}
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          points={svgPoints}
+        />
+        {points.map((val, idx) => {
+          const x = points.length === 1 ? (idx === 0 ? 0 : width) : (idx / (points.length - 1)) * width;
+          const y = height - ((val - minVal) / (maxVal - minVal || 1)) * (height - 4) - 2;
+          return (
+            <circle
+              key={idx}
+              cx={x}
+              cy={y}
+              r="2"
+              className={val === 4 ? 'fill-rose-400' : val === 3 ? 'fill-amber-400' : val === 2 ? 'fill-indigo-400' : 'fill-emerald-400'}
+            />
+          );
+        })}
+      </svg>
+
+      {/* Granular Severity Distribution Hover Tooltip */}
+      <div className="absolute left-1/2 bottom-full mb-2 -translate-x-1/2 hidden group-hover/sparkline:block z-50 w-56 rounded-xl border border-slate-800 bg-slate-950 p-3 text-[9.5px] font-mono text-slate-300 shadow-2xl pointer-events-none leading-tight">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 font-bold text-white mb-2">
+          <span className="flex items-center gap-1 text-indigo-400">
+            <Icons.Activity className="h-3 w-3" />
+            Severity Distribution
+          </span>
+          <span className="px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 text-[8px]">
+            {selectedIncidents.length} Selected
+          </span>
+        </div>
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between bg-rose-950/40 p-1.5 rounded border border-rose-500/20">
+            <div className="flex items-center space-x-1.5">
+              <span className="h-2 w-2 rounded-full bg-rose-500" />
+              <span className="text-rose-300 font-bold">SEV-1 (Critical)</span>
+            </div>
+            <span className="font-extrabold text-rose-200">{c1}</span>
+          </div>
+          <div className="flex items-center justify-between bg-amber-950/40 p-1.5 rounded border border-amber-500/20">
+            <div className="flex items-center space-x-1.5">
+              <span className="h-2 w-2 rounded-full bg-amber-500" />
+              <span className="text-amber-300 font-bold">SEV-2 (High)</span>
+            </div>
+            <span className="font-extrabold text-amber-200">{c2}</span>
+          </div>
+          <div className="flex items-center justify-between bg-indigo-950/40 p-1.5 rounded border border-indigo-500/20">
+            <div className="flex items-center space-x-1.5">
+              <span className="h-2 w-2 rounded-full bg-indigo-500" />
+              <span className="text-indigo-300 font-bold">SEV-3 (Medium)</span>
+            </div>
+            <span className="font-extrabold text-indigo-200">{c3}</span>
+          </div>
+          <div className="flex items-center justify-between bg-emerald-950/40 p-1.5 rounded border border-emerald-500/20">
+            <div className="flex items-center space-x-1.5">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              <span className="text-emerald-300 font-bold">SEV-4 (Low)</span>
+            </div>
+            <span className="font-extrabold text-emerald-200">{c4}</span>
+          </div>
+        </div>
+        <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800" />
+      </div>
+    </div>
+  );
+}
+
 interface IncidentWorkspaceProps {
   modelSelection: string;
   onAddAuditLog: (operator: string, action: string, module: string, status: 'SUCCESS' | 'FAILED' | 'PENDING_APPROVAL', payload: string) => void;
@@ -693,6 +835,191 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
   });
   const [showSnoozedOnly, setShowSnoozedOnly] = useState(false);
 
+  // --- SERVICE GROUPING COLLAPSIBLE STATE ---
+  const [collapsedServices, setCollapsedServices] = useState<Record<string, boolean>>({});
+
+  // --- QUICK FILTER PRESETS STATE ---
+  const DEFAULT_FILTER_PRESETS = [
+    {
+      id: 'unassigned-criticals',
+      name: '🔥 Unassigned Criticals',
+      description: 'P0/Critical tickets requiring urgent owner assignment',
+      severityFilter: 'P0',
+      assigneeFilter: 'UNASSIGNED',
+      serviceFilter: 'ALL',
+      priorityOnly: true,
+      timePeriodFilter: 'ALL',
+      showSnoozedOnly: false
+    },
+    {
+      id: 'pending-ops-actions',
+      name: '⚡ Pending Ops Actions',
+      description: 'Active unassigned or investigating operational alerts',
+      severityFilter: 'ALL',
+      assigneeFilter: 'UNASSIGNED',
+      serviceFilter: 'ALL',
+      priorityOnly: false,
+      timePeriodFilter: 'ALL',
+      showSnoozedOnly: false
+    },
+    {
+      id: 'high-sla-urgency',
+      name: '⏱️ High SLA Urgency',
+      description: 'P0 & P1 incidents created within last 24h',
+      severityFilter: 'ALL',
+      assigneeFilter: 'ALL',
+      serviceFilter: 'ALL',
+      priorityOnly: true,
+      timePeriodFilter: '24h',
+      showSnoozedOnly: false
+    },
+    {
+      id: 'snoozed-queue',
+      name: '🌙 Snoozed Queue',
+      description: 'Temporarily snoozed incidents',
+      severityFilter: 'ALL',
+      assigneeFilter: 'ALL',
+      serviceFilter: 'ALL',
+      priorityOnly: false,
+      timePeriodFilter: 'ALL',
+      showSnoozedOnly: true
+    }
+  ];
+
+  const [filterPresets, setFilterPresets] = useState(() => {
+    try {
+      const saved = localStorage.getItem('supportpilot_custom_filter_presets');
+      return saved ? [...DEFAULT_FILTER_PRESETS, ...JSON.parse(saved)] : DEFAULT_FILTER_PRESETS;
+    } catch {
+      return DEFAULT_FILTER_PRESETS;
+    }
+  });
+  const [activePresetId, setActivePresetId] = useState<string>('');
+  const [isSavingCustomPreset, setIsSavingCustomPreset] = useState(false);
+  const [customPresetName, setCustomPresetName] = useState('');
+
+  const handleApplyFilterPreset = (presetId: string) => {
+    const preset = filterPresets.find(p => p.id === presetId);
+    if (!preset) return;
+    setActivePresetId(presetId);
+    setSeverityFilter(preset.severityFilter as any);
+    setAssigneeFilter(preset.assigneeFilter);
+    setServiceFilter(preset.serviceFilter);
+    setPriorityOnly(preset.priorityOnly);
+    setTimePeriodFilter(preset.timePeriodFilter as any);
+    setShowSnoozedOnly(preset.showSnoozedOnly);
+
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `🎯 Applied Quick Filter Preset: "${preset.name}"` }
+    }));
+  };
+
+  const handleSaveCurrentFilterPreset = () => {
+    if (!customPresetName.trim()) return;
+    const newPreset = {
+      id: `custom-preset-${Date.now()}`,
+      name: `⭐ ${customPresetName.trim()}`,
+      description: `Custom preset created by ${LOGGED_IN_USER}`,
+      severityFilter,
+      assigneeFilter,
+      serviceFilter,
+      priorityOnly,
+      timePeriodFilter,
+      showSnoozedOnly
+    };
+
+    const updated = [...filterPresets, newPreset];
+    setFilterPresets(updated);
+    try {
+      const customOnly = updated.filter(p => p.id.startsWith('custom-preset-'));
+      localStorage.setItem('supportpilot_custom_filter_presets', JSON.stringify(customOnly));
+    } catch (e) {
+      console.error(e);
+    }
+
+    setActivePresetId(newPreset.id);
+    setIsSavingCustomPreset(false);
+    setCustomPresetName('');
+
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `Saved custom filter preset "${newPreset.name}".` }
+    }));
+  };
+
+  // --- BULK PRIORITY ADJUSTMENT HANDLER ---
+  const handleBulkPriorityShift = (direction: 'UP' | 'DOWN') => {
+    const targetIds = selectedIncidentIds.length > 0 ? selectedIncidentIds : [selectedIncident.id];
+    const severityOrder: SeverityType[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
+
+    let shiftedCount = 0;
+    setIncidents(prev => prev.map(inc => {
+      if (targetIds.includes(inc.id)) {
+        const currIdx = severityOrder.indexOf(inc.severity);
+        let newIdx = currIdx;
+        if (direction === 'UP' && currIdx < severityOrder.length - 1) {
+          newIdx = currIdx + 1;
+        } else if (direction === 'DOWN' && currIdx > 0) {
+          newIdx = currIdx - 1;
+        }
+
+        if (newIdx !== currIdx) {
+          shiftedCount++;
+          const newSev = severityOrder[newIdx];
+          const shouldEscalate = newSev === 'CRITICAL' && inc.status !== 'SOLVED';
+          return {
+            ...inc,
+            severity: newSev,
+            status: shouldEscalate ? 'ESCALATED' : inc.status,
+            lastModifiedBy: LOGGED_IN_USER,
+            statusHistory: [
+              ...getStatusHistory(inc),
+              {
+                status: shouldEscalate ? 'ESCALATED' : inc.status,
+                timestamp: new Date().toISOString(),
+                changedBy: LOGGED_IN_USER,
+                message: `[Bulk Priority Adjustment] Shifted severity ${direction === 'UP' ? 'UP (+1 Tier)' : 'DOWN (-1 Tier)'} to ${newSev}.`
+              }
+            ]
+          };
+        }
+      }
+      return inc;
+    }));
+
+    if (shiftedCount > 0) {
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: `⚡ Adjusted priority of ${shiftedCount} incident(s) ${direction === 'UP' ? 'UP (+1 Tier)' : 'DOWN (-1 Tier)'}.` }
+      }));
+    } else {
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: `All selected incidents are already at the ${direction === 'UP' ? 'maximum (CRITICAL P0)' : 'minimum (LOW P3)'} severity tier.` }
+      }));
+    }
+  };
+
+  // --- USER IMPACT SCORE CALCULATION ---
+  const calculateUserImpactScore = (selectedIncs: Incident[]) => {
+    if (selectedIncs.length === 0) return { scorePct: 0, userCount: 0, totalPlatform: 50000 };
+
+    const totalPlatformUsers = 50000;
+    const userCount = selectedIncs.reduce((acc, inc) => {
+      if ((inc as any).affectedUserCount) return acc + (inc as any).affectedUserCount;
+      if (inc.analysis && (inc.analysis as any).impactedUsers) return acc + (inc.analysis as any).impactedUsers;
+      
+      const idNum = parseInt(inc.id.replace(/\D/g, '') || '10', 10);
+      switch (inc.severity) {
+        case 'CRITICAL': return acc + 12500 + (idNum % 3500);
+        case 'HIGH': return acc + 3600 + (idNum % 1400);
+        case 'MEDIUM': return acc + 900 + (idNum % 400);
+        case 'LOW':
+        default: return acc + 180 + (idNum % 120);
+      }
+    }, 0);
+
+    const scorePct = Math.min(100, Math.round((userCount / totalPlatformUsers) * 100));
+    return { scorePct, userCount, totalPlatform: totalPlatformUsers };
+  };
+
   // --- CORRELATION MAP & LOGS MODAL STATE ---
   const [isCorrelationViewOpen, setIsCorrelationViewOpen] = useState(false);
   const [isCorrelatedLogsOpen, setIsCorrelatedLogsOpen] = useState(false);
@@ -759,6 +1086,329 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
     }
 
     setSelectedIncidentIds([]);
+  };
+
+  // --- WATCHED INCIDENTS & COMPARE STATE ---
+  const [watchedIncidentIds, setWatchedIncidentIds] = useState<string[]>(['INC-8831']);
+  const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
+
+  const toggleWatchIncident = (incidentId: string) => {
+    setWatchedIncidentIds(prev => {
+      const isWatched = prev.includes(incidentId);
+      const next = isWatched ? prev.filter(id => id !== incidentId) : [...prev, incidentId];
+      if (playUiSound) playUiSound('ding');
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: isWatched ? `Unpinned #${incidentId} from Watched List.` : `📌 Pinned #${incidentId} to Watched Incidents List!` }
+      }));
+      return next;
+    });
+  };
+
+  // --- BULK ACTION MODALS & HANDLERS ---
+  const [isBulkNoteModalOpen, setIsBulkNoteModalOpen] = useState(false);
+  const [bulkNoteCategory, setBulkNoteCategory] = useState<'Diagnostic' | 'Remediation' | 'Downstream Alert' | 'Customer Communication'>('Diagnostic');
+  const [bulkNoteContent, setBulkNoteContent] = useState('');
+
+  const [isSlaOverrideModalOpen, setIsSlaOverrideModalOpen] = useState(false);
+  const [slaOverrideType, setSlaOverrideType] = useState<'EXTEND_1H' | 'EXTEND_4H' | 'EXTEND_24H' | 'PAUSE' | 'RESET'>('EXTEND_4H');
+  const [slaOverrideReason, setSlaOverrideReason] = useState('Known downstream maintenance window / False-positive monitoring spike');
+
+  // Confirm Action Dialog State for Bulk Operations
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    actionType: 'AUTO_MERGE' | 'MASS_ESCALATION';
+    targetCount: number;
+    onConfirm: () => void;
+  } | null>(null);
+
+  // Bulk Auto-Merge Core Execution
+  const performBulkAutoMerge = () => {
+    const idsToMerge = selectedIncidentIds.length > 0 ? selectedIncidentIds : [selectedIncident.id];
+    const targetIncidents = incidents.filter(i => idsToMerge.includes(i.id));
+    const severityRank: Record<string, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
+    const sorted = [...targetIncidents].sort((a, b) => (severityRank[b.severity] || 0) - (severityRank[a.severity] || 0));
+    const masterIncident = sorted[0];
+    const secondaryIncidents = sorted.slice(1);
+    const secondaryIds = secondaryIncidents.map(i => i.id);
+
+    setIncidents(prev => prev.map(inc => {
+      if (inc.id === masterIncident.id) {
+        const mergeNote = `[BULK AUTO-MERGE] Consolidated duplicate/overlapping incidents (${secondaryIds.join(', ')}) into master thread. Retained original audit references.`;
+        return {
+          ...inc,
+          description: `${inc.description}\n\n${mergeNote}`,
+          tags: Array.from(new Set([...(inc.tags || []), 'MergedMaster', ...secondaryIncidents.flatMap(s => s.tags || [])])),
+          lastModifiedBy: LOGGED_IN_USER,
+          statusHistory: [
+            ...(inc.statusHistory || []),
+            {
+              status: inc.status,
+              timestamp: new Date().toISOString(),
+              changedBy: LOGGED_IN_USER,
+              message: mergeNote
+            }
+          ]
+        };
+      } else if (secondaryIds.includes(inc.id)) {
+        return {
+          ...inc,
+          status: 'SOLVED',
+          lastModifiedBy: LOGGED_IN_USER,
+          tags: Array.from(new Set([...(inc.tags || []), 'AutoMerged'])),
+          statusHistory: [
+            ...(inc.statusHistory || []),
+            {
+              status: 'SOLVED',
+              timestamp: new Date().toISOString(),
+              changedBy: LOGGED_IN_USER,
+              message: `Auto-merged into Master Incident thread #${masterIncident.id}. Reference maintained for auditability.`
+            }
+          ]
+        };
+      }
+      return inc;
+    }));
+
+    setSelectedIncident(masterIncident);
+    setSelectedIncidentIds([]);
+    if (playUiSound) playUiSound('ding');
+
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `⚡ Bulk Auto-Merge Complete! Consolidated ${secondaryIds.length} incident(s) into Master Thread #${masterIncident.id}.` }
+    }));
+
+    if (onAddAuditLog) {
+      onAddAuditLog(LOGGED_IN_USER, 'Bulk Auto-Merge', 'Incident Workspace', 'SUCCESS', `Merged ${secondaryIds.join(', ')} into master incident ${masterIncident.id}`);
+    }
+  };
+
+  // Bulk Auto-Merge Handler with Confirmation Step
+  const handleBulkAutoMerge = () => {
+    const idsToMerge = selectedIncidentIds.length > 0 ? selectedIncidentIds : [selectedIncident.id];
+    if (idsToMerge.length < 2) {
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: 'Select at least 2 incidents to execute Bulk Auto-Merge.' }
+      }));
+      return;
+    }
+
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Confirm Bulk Auto-Merge',
+      description: `You are about to consolidate ${idsToMerge.length} selected incidents into a single Master Incident thread. Secondary incidents will be automatically marked as SOLVED and references logged for auditability.`,
+      actionType: 'AUTO_MERGE',
+      targetCount: idsToMerge.length,
+      onConfirm: () => {
+        performBulkAutoMerge();
+        setConfirmDialog(null);
+      }
+    });
+  };
+
+  // Bulk Diagnostic Note Handler
+  const handleApplyBulkNote = () => {
+    if (!bulkNoteContent.trim()) return;
+    const targetIds = selectedIncidentIds.length > 0 ? selectedIncidentIds : [selectedIncident.id];
+
+    const noteEntry = `[${bulkNoteCategory.toUpperCase()} NOTE] ${bulkNoteContent.trim()}`;
+
+    setIncidents(prev => prev.map(inc => {
+      if (targetIds.includes(inc.id)) {
+        return {
+          ...inc,
+          lastModifiedBy: LOGGED_IN_USER,
+          statusHistory: [
+            ...(inc.statusHistory || []),
+            {
+              status: inc.status,
+              timestamp: new Date().toISOString(),
+              changedBy: LOGGED_IN_USER,
+              message: noteEntry
+            }
+          ]
+        };
+      }
+      return inc;
+    }));
+
+    if (targetIds.includes(selectedIncident.id)) {
+      setSelectedIncident(prev => ({
+        ...prev,
+        lastModifiedBy: LOGGED_IN_USER,
+        statusHistory: [
+          ...(prev.statusHistory || []),
+          {
+            status: prev.status,
+            timestamp: new Date().toISOString(),
+            changedBy: LOGGED_IN_USER,
+            message: noteEntry
+          }
+        ]
+      }));
+    }
+
+    if (playUiSound) playUiSound('ding');
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `Appended diagnostic note to ${targetIds.length} selected incident record(s)!` }
+    }));
+
+    if (onAddAuditLog) {
+      onAddAuditLog(LOGGED_IN_USER, 'Bulk Diagnostic Note', 'Incident Workspace', 'SUCCESS', `Appended note to ${targetIds.length} incidents`);
+    }
+
+    setBulkNoteContent('');
+    setIsBulkNoteModalOpen(false);
+  };
+
+  // Apply SLA Override Handler
+  const handleApplySlaOverride = () => {
+    const targetIds = selectedIncidentIds.length > 0 ? selectedIncidentIds : [selectedIncident.id];
+
+    setIncidents(prev => prev.map(inc => {
+      if (targetIds.includes(inc.id)) {
+        let addedMins = 0;
+        if (slaOverrideType === 'EXTEND_1H') addedMins = 60;
+        else if (slaOverrideType === 'EXTEND_4H') addedMins = 240;
+        else if (slaOverrideType === 'EXTEND_24H') addedMins = 1440;
+
+        const newLimit = slaOverrideType === 'RESET' ? 60 : inc.slaLimitMins + addedMins;
+        const overrideMsg = `SLA Override Applied (${slaOverrideType}): ${slaOverrideReason}. Adjusted SLA Limit to ${newLimit}m.`;
+
+        return {
+          ...inc,
+          slaLimitMins: newLimit,
+          lastModifiedBy: LOGGED_IN_USER,
+          statusHistory: [
+            ...(inc.statusHistory || []),
+            {
+              status: inc.status,
+              timestamp: new Date().toISOString(),
+              changedBy: LOGGED_IN_USER,
+              message: overrideMsg
+            }
+          ]
+        };
+      }
+      return inc;
+    }));
+
+    if (targetIds.includes(selectedIncident.id)) {
+      setSelectedIncident(prev => {
+        let addedMins = 0;
+        if (slaOverrideType === 'EXTEND_1H') addedMins = 60;
+        else if (slaOverrideType === 'EXTEND_4H') addedMins = 240;
+        else if (slaOverrideType === 'EXTEND_24H') addedMins = 1440;
+        const newLimit = slaOverrideType === 'RESET' ? 60 : prev.slaLimitMins + addedMins;
+        return {
+          ...prev,
+          slaLimitMins: newLimit,
+          lastModifiedBy: LOGGED_IN_USER,
+          statusHistory: [
+            ...(prev.statusHistory || []),
+            {
+              status: prev.status,
+              timestamp: new Date().toISOString(),
+              changedBy: LOGGED_IN_USER,
+              message: `SLA Override Applied (${slaOverrideType}): ${slaOverrideReason}`
+            }
+          ]
+        };
+      });
+    }
+
+    if (playUiSound) playUiSound('ding');
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `SLA Override applied to ${targetIds.length} incident(s)! Adjusted limit.` }
+    }));
+
+    if (onAddAuditLog) {
+      onAddAuditLog(LOGGED_IN_USER, 'SLA Override', 'Incident Workspace', 'SUCCESS', `Overrode SLA for ${targetIds.length} incidents: ${slaOverrideType}`);
+    }
+
+    setIsSlaOverrideModalOpen(false);
+  };
+
+  // Mass Escalation Log Core Execution
+  const performMassEscalationLog = () => {
+    const targetIds = selectedIncidentIds.length > 0 ? selectedIncidentIds : [selectedIncident.id];
+    const targetIncs = incidents.filter(i => targetIds.includes(i.id));
+    const summaryList = targetIncs.map(i => `#${i.id} (${i.appName} - ${i.severity})`).join(', ');
+    const auditMsg = `MASS ESCALATION LOG: ${targetIds.length} incident(s) flagged for L3/NOC emergency review: [${summaryList}]`;
+
+    if (onAddAuditLog) {
+      onAddAuditLog(
+        LOGGED_IN_USER,
+        'Mass Escalation Log',
+        'Incident Workspace',
+        'SUCCESS',
+        auditMsg
+      );
+    }
+
+    if (playUiSound) playUiSound('ding');
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `⚡ Mass Escalation Logged for ${targetIds.length} incident(s) to Audit Panel!` }
+    }));
+  };
+
+  // Mass Escalation Log Handler with Confirmation Step
+  const handleMassEscalationLog = () => {
+    const targetIds = selectedIncidentIds.length > 0 ? selectedIncidentIds : [selectedIncident.id];
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Confirm Mass Escalation',
+      description: `Are you sure you want to trigger a Mass Escalation log for ${targetIds.length} selected incident(s)? This will record high-priority audit events for L3/NOC emergency dispatch.`,
+      actionType: 'MASS_ESCALATION',
+      targetCount: targetIds.length,
+      onConfirm: () => {
+        performMassEscalationLog();
+        setConfirmDialog(null);
+      }
+    });
+  };
+
+  // Copy Full Audit Trail Handler
+  const handleCopyAuditTrail = () => {
+    const targetIds = selectedIncidentIds.length > 0 ? selectedIncidentIds : [selectedIncident.id];
+    const targetIncs = incidents.filter(i => targetIds.includes(i.id));
+
+    const auditTrailExport = targetIncs.map(inc => ({
+      incidentId: inc.id,
+      title: inc.title,
+      service: inc.appName,
+      tenant: inc.tenantId,
+      severity: inc.severity,
+      status: inc.status,
+      assignee: inc.assignee,
+      createdAt: inc.createdAt,
+      slaLimitMins: inc.slaLimitMins,
+      statusHistory: (inc.statusHistory || []).map(h => ({
+        timestamp: h.timestamp,
+        status: h.status,
+        changedBy: h.changedBy,
+        message: h.message
+      }))
+    }));
+
+    const formattedText = JSON.stringify(auditTrailExport, null, 2);
+    navigator.clipboard.writeText(formattedText);
+
+    if (playUiSound) playUiSound('ding');
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `📋 Copied full audit trail for ${targetIds.length} incident(s) to clipboard as JSON!` }
+    }));
+
+    if (onAddAuditLog) {
+      onAddAuditLog(
+        LOGGED_IN_USER,
+        'Export Audit Trail',
+        'Incident Workspace',
+        'SUCCESS',
+        `Exported full audit trail for ${targetIds.length} incidents (${targetIds.join(', ')}) to clipboard`
+      );
+    }
   };
 
   // Workflow Keybinding Listener (E = Escalate, A = Acknowledge, R = Resolve, S = Snooze, L = Correlated Logs)
@@ -1457,11 +2107,37 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
         setIsScratchpadOpen(prev => !prev);
+        return;
+      }
+
+      // Check if user is in an input field or text area
+      const activeEl = document.activeElement;
+      const targetTag = activeEl?.tagName?.toLowerCase();
+      if (targetTag === 'input' || targetTag === 'textarea' || (activeEl as HTMLElement)?.isContentEditable) {
+        return;
+      }
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+      let keymap = DEFAULT_WORKFLOW_KEYMAP;
+      try {
+        const saved = localStorage.getItem('supportpilot_workflow_keymap');
+        if (saved) keymap = { ...DEFAULT_WORKFLOW_KEYMAP, ...JSON.parse(saved) };
+      } catch (err) {}
+
+      const keyUpper = e.key.toUpperCase();
+
+      if (keyUpper === (keymap.sla_override || 'O').toUpperCase()) {
+        e.preventDefault();
+        setIsSlaOverrideModalOpen(prev => !prev);
+        if (playUiSound) playUiSound('click');
+        window.dispatchEvent(new CustomEvent('show-toast', {
+          detail: { message: '⏱️ Apply SLA Override modal opened via keyboard shortcut [O]!' }
+        }));
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [playUiSound]);
 
   useEffect(() => {
     if (!isAutoRefreshActive) return;
@@ -3994,20 +4670,52 @@ Generated by SupportPilot AI Platform.
             exit={{ opacity: 0, y: -8 }}
             className="mb-3 p-2.5 rounded-xl border border-indigo-500/40 bg-slate-950/95 shadow-2xl backdrop-blur-md flex flex-wrap items-center justify-between gap-2 font-mono text-xs"
           >
-            <div className="flex items-center space-x-2">
-              <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping" />
-              <span className="font-bold text-white text-[11px]">
-                {selectedIncidentIds.length} Selected
-              </span>
-              <button
-                onClick={() => setSelectedIncidentIds([])}
-                className="text-[9px] text-slate-400 hover:text-white underline cursor-pointer"
-              >
-                Deselect
-              </button>
+            <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-1.5">
+                <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping" />
+                <span className="font-bold text-white text-[11px]">
+                  {selectedIncidentIds.length} Selected
+                </span>
+                <button
+                  onClick={() => setSelectedIncidentIds([])}
+                  className="text-[9px] text-slate-400 hover:text-white underline cursor-pointer ml-1"
+                >
+                  Deselect
+                </button>
+              </div>
+
+              {/* UNIQUE SERVICES COUNT INDICATOR */}
+              {(() => {
+                const selectedIncs = incidents.filter(i => selectedIncidentIds.includes(i.id));
+                const uniqueApps = Array.from(new Set(selectedIncs.map(i => i.appName)));
+                return (
+                  <div
+                    className="flex items-center space-x-1 px-2 py-0.5 rounded-lg bg-slate-900 border border-slate-800 text-[9.5px] font-mono text-cyan-300 shrink-0"
+                    title={`Involved Services: ${uniqueApps.join(', ')}`}
+                  >
+                    <Icons.Server className="h-3 w-3 text-cyan-400" />
+                    <span className="font-bold">{uniqueApps.length} Service{uniqueApps.length > 1 ? 's' : ''}</span>
+                  </div>
+                );
+              })()}
+
+              {/* SPARKLINE CHART FOR AGGREGATE SEVERITY TREND */}
+              <BulkSeveritySparkline selectedIncidents={incidents.filter(i => selectedIncidentIds.includes(i.id))} />
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+              {/* Quick Compare Button (When exactly 2 selected) */}
+              {selectedIncidentIds.length === 2 && (
+                <button
+                  onClick={() => setIsCompareModalOpen(true)}
+                  className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-amber-500/60 bg-amber-950/60 hover:bg-amber-900/80 text-amber-200 font-bold shadow-lg shadow-amber-500/10 transition-all cursor-pointer animate-pulse"
+                  title="Open side-by-side comparison highlighting metadata, timestamps, and assigned pods"
+                >
+                  <Icons.ArrowLeftRight className="h-3.5 w-3.5 text-amber-400 group-hover:scale-110 transition-transform" />
+                  <span>Compare (2)</span>
+                </button>
+              )}
+
               {/* One-Click Escalation Button */}
               <button
                 onClick={() => handleOneClickEscalation(selectedIncidentIds)}
@@ -4018,13 +4726,63 @@ Generated by SupportPilot AI Platform.
                 <span>Escalate (E)</span>
               </button>
 
+              {/* Mass Escalation Log Button */}
+              <button
+                onClick={handleMassEscalationLog}
+                className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-red-500/50 bg-red-950/50 hover:bg-red-900/70 text-red-200 font-bold shadow-md transition-all cursor-pointer"
+                title="Write dedicated log entry summarizing all escalated incidents to Audit Panel"
+              >
+                <Icons.ShieldAlert className="h-3.5 w-3.5 text-red-400 group-hover:scale-110 transition-transform" />
+                <span>Mass Log</span>
+              </button>
+
+              {/* Copy Full Audit Trail Button */}
+              <button
+                onClick={handleCopyAuditTrail}
+                className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-900 hover:bg-slate-800 text-slate-200 font-bold shadow-md transition-all cursor-pointer"
+                title="Copy structured history of status updates and assignments for all selected incidents to clipboard"
+              >
+                <Icons.ClipboardCopy className="h-3.5 w-3.5 text-indigo-400 group-hover:scale-110 transition-transform" />
+                <span>Copy Trail</span>
+              </button>
+
+              {/* Bulk Auto-Merge Button */}
+              <button
+                onClick={handleBulkAutoMerge}
+                className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-purple-500/50 bg-purple-950/50 hover:bg-purple-900/70 text-purple-200 font-bold shadow-md transition-all cursor-pointer"
+                title="Group duplicate or overlapping incident IDs into a master thread"
+              >
+                <Icons.GitMerge className="h-3.5 w-3.5 text-purple-400 group-hover:scale-110 transition-transform" />
+                <span>Auto-Merge</span>
+              </button>
+
+              {/* Bulk Note Button */}
+              <button
+                onClick={() => setIsBulkNoteModalOpen(true)}
+                className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-emerald-500/50 bg-emerald-950/50 hover:bg-emerald-900/70 text-emerald-200 font-bold shadow-md transition-all cursor-pointer"
+                title="Append shared diagnostic or context note to all selected incidents"
+              >
+                <Icons.FilePlus className="h-3.5 w-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
+                <span>Bulk Note</span>
+              </button>
+
+              {/* Apply SLA Override Button */}
+              <button
+                onClick={() => setIsSlaOverrideModalOpen(true)}
+                className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-amber-500/50 bg-amber-950/50 hover:bg-amber-900/70 text-amber-200 font-bold shadow-md transition-all cursor-pointer"
+                title="Manually adjust SLA countdown timer for selected incidents"
+              >
+                <Icons.TimerReset className="h-3.5 w-3.5 text-amber-400 group-hover:scale-110 transition-transform" />
+                <span>SLA Override</span>
+              </button>
+
               {/* Snooze Button */}
               <div className="relative group/snooze-menu">
                 <button
-                  className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-amber-500/40 bg-amber-950/40 hover:bg-amber-900/60 text-amber-300 font-bold shadow-md transition-all cursor-pointer"
+                  className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-indigo-500/40 bg-indigo-950/40 hover:bg-indigo-900/60 text-indigo-300 font-bold shadow-md transition-all cursor-pointer"
                   title="Snooze selected incidents for set duration (S)"
                 >
-                  <Icons.Clock className="h-3.5 w-3.5 text-amber-400 group-hover:rotate-12 transition-transform animate-pulse" />
+                  <Icons.Clock className="h-3.5 w-3.5 text-indigo-400 group-hover:rotate-12 transition-transform" />
                   <span>Snooze (S)</span>
                 </button>
                 <div className="absolute left-0 top-full mt-1 hidden group-hover/snooze-menu:block z-50 bg-slate-950 border border-slate-800 rounded-lg shadow-2xl p-1.5 space-y-1 whitespace-nowrap min-w-[110px]">
@@ -4046,7 +4804,7 @@ Generated by SupportPilot AI Platform.
                 className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-cyan-500/40 bg-cyan-950/40 hover:bg-cyan-900/60 text-cyan-300 font-bold shadow-md transition-all cursor-pointer"
                 title="View Correlated Logs Stream (L)"
               >
-                <Icons.FileText className="h-3.5 w-3.5 text-cyan-400 group-hover:scale-110 transition-transform animate-pulse" />
+                <Icons.FileText className="h-3.5 w-3.5 text-cyan-400 group-hover:scale-110 transition-transform" />
                 <span>Logs (L)</span>
               </button>
 
@@ -4132,25 +4890,61 @@ Generated by SupportPilot AI Platform.
 
                   <div className="pl-1.5 space-y-2.5 w-full flex-1">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-1">
+                      <div className="flex items-center space-x-1.5 flex-wrap gap-y-1">
                         <span title="Drag to re-order incident queue position">
                           <Icons.GripVertical className="h-3.5 w-3.5 text-slate-600 hover:text-slate-300 cursor-grab active:cursor-grabbing shrink-0" />
                         </span>
+                        
+                        {/* Watch / Pin Incident Toggle */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleWatchIncident(inc.id);
+                          }}
+                          className={`p-1 rounded-md transition-all cursor-pointer ${
+                            watchedIncidentIds.includes(inc.id)
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-sm shadow-amber-500/20'
+                              : 'text-slate-600 hover:text-slate-300 hover:bg-slate-800/80 border border-transparent'
+                          }`}
+                          title={watchedIncidentIds.includes(inc.id) ? "Unwatch / Unpin Incident" : "Watch / Pin Incident to Top Dashboard"}
+                        >
+                          <Icons.Pin className={`h-3 w-3 ${watchedIncidentIds.includes(inc.id) ? 'fill-amber-400 rotate-45' : ''}`} />
+                        </button>
+
                         <span className="font-mono text-[9px] text-slate-500 font-semibold">{inc.id}</span>
-                        {/* Sentiment Score Badge */}
+                        
+                        {/* Sentiment Indicator Chip */}
                         {(() => {
                           const sentiment = calculateSentimentScore(inc);
+                          const isFrustrated = sentiment.score < 50;
                           return (
                             <div 
-                              className={`flex items-center gap-0.5 rounded px-1 py-0.25 border text-[7.5px] font-mono font-bold ${sentiment.color}`}
-                              title={`Sentiment score: ${sentiment.score}/100 - ${sentiment.label}`}
+                              className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 border text-[8px] font-mono font-bold ${sentiment.color}`}
+                              title={`Sentiment Analysis on notes & updates: ${sentiment.score}/100 - ${sentiment.label}. High priority for tense communication.`}
                             >
-                              <Icons.Smile className="h-2.5 w-2.5 shrink-0" />
-                              <span>{sentiment.score}</span>
+                              <span className="text-[10px] leading-none">
+                                {sentiment.score < 40 ? '😠' : sentiment.score < 65 ? '🔥' : sentiment.score < 85 ? '💬' : '🟢'}
+                              </span>
+                              <span className="uppercase">{sentiment.label.split(' ')[0]}</span>
+                            </div>
+                          );
+                        })()}
+
+                        {/* AI-Driven Suggested Category Badge */}
+                        {(() => {
+                          const cat = suggestCategory(inc);
+                          return (
+                            <div
+                              className="flex items-center space-x-1 px-1.5 py-0.5 rounded-md bg-indigo-950/80 border border-indigo-500/40 text-[8px] font-mono font-bold text-indigo-300 shrink-0"
+                              title={`AI Triaging Engine suggested category: ${cat}`}
+                            >
+                              <Icons.Sparkles className="h-2.5 w-2.5 text-indigo-400 animate-pulse" />
+                              <span>{cat}</span>
                             </div>
                           );
                         })()}
                       </div>
+
                       <div className="flex items-center space-x-1 shrink-0">
                         {isUnassignedToMe && (
                           <button
@@ -4244,11 +5038,62 @@ Generated by SupportPilot AI Platform.
                       })()
                     )}
 
-                    {/* Bottom App/Channel Row */}
+                    {/* Bottom App/Channel Row with Service Health & Deployment Tooltip */}
                     <div className="flex items-center justify-between border-t border-slate-800/40 pt-2 text-[10px]">
-                      <div className="flex items-center space-x-1 text-slate-400 font-medium">
-                        {getChannelIcon(inc.source)}
-                        <span className="font-mono text-[9.5px]">{inc.appName}</span>
+                      <div className="relative group/service-tooltip shrink-0">
+                        <div className="flex items-center space-x-1 text-slate-300 font-medium cursor-help hover:text-indigo-300 transition-colors">
+                          {getChannelIcon(inc.source)}
+                          <span className="font-mono text-[9.5px] font-bold border-b border-dashed border-slate-700 hover:border-indigo-400">{inc.appName}</span>
+                        </div>
+
+                        {/* Tooltip for Service Health & Recent Deployments */}
+                        <div className="absolute left-0 bottom-full mb-2 hidden group-hover/service-tooltip:block z-50 w-60 rounded-xl border border-slate-800 bg-slate-950 p-3 text-[9.5px] font-mono text-slate-300 shadow-2xl leading-normal pointer-events-none">
+                          {(() => {
+                            const info = getServiceHealthAndDeployments(inc.appName);
+                            return (
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 font-bold text-white">
+                                  <span className="flex items-center gap-1">
+                                    <Icons.Server className="h-3 w-3 text-indigo-400" />
+                                    {info.serviceName}
+                                  </span>
+                                  <span className={`px-1.5 py-0.2 rounded text-[8px] font-extrabold ${
+                                    info.status === 'OPERATIONAL' ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/30' : 'bg-amber-950 text-amber-400 border border-amber-500/30'
+                                  }`}>
+                                    {info.status}
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-1 text-[8.5px]">
+                                  <div className="bg-slate-900/60 p-1 rounded border border-slate-800/60">
+                                    <span className="text-slate-500 block">Uptime SLA</span>
+                                    <span className="text-emerald-400 font-bold">{info.uptime}</span>
+                                  </div>
+                                  <div className="bg-slate-900/60 p-1 rounded border border-slate-800/60">
+                                    <span className="text-slate-500 block">Active Replicas</span>
+                                    <span className="text-indigo-300 font-bold">{info.activePods} Pods</span>
+                                  </div>
+                                </div>
+                                <div className="border-t border-slate-800/80 pt-1.5 space-y-1">
+                                  <div className="text-[8.5px] font-bold text-indigo-300 flex items-center justify-between">
+                                    <span className="flex items-center gap-1">
+                                      <Icons.GitCommit className="h-3 w-3 text-indigo-400" />
+                                      Deployment History
+                                    </span>
+                                    <span className="text-white bg-indigo-950 border border-indigo-800 px-1 rounded text-[7.5px]">{info.version}</span>
+                                  </div>
+                                  <div className="text-[8px] text-slate-400 flex items-center justify-between">
+                                    <span>Commit: <strong className="text-slate-200">{info.commitHash}</strong></span>
+                                    <span>{info.deployTime}</span>
+                                  </div>
+                                  <div className="text-[8px] text-slate-500">
+                                    Triggered by <span className="text-slate-400 font-semibold">{info.author}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                          <div className="absolute top-full left-4 border-4 border-transparent border-t-slate-800" />
+                        </div>
                       </div>
                       
                       {/* SLA / CSAT Status Badge */}
@@ -4395,24 +5240,44 @@ Generated by SupportPilot AI Platform.
               return groups;
             })();
 
+            const watchedList = incidents.filter(i => watchedIncidentIds.includes(i.id));
+
             return (
-              <AnimatePresence mode="popLayout">
-                {groupBy === 'NONE' ? (
-                  filteredIncidents.map((inc) => renderIncidentCard(inc))
-                ) : (
-                  Object.entries(groupedIncidents || {}).map(([groupName, groupItems]) => (
-                    <div key={groupName} className="space-y-2 mt-2">
-                      <div className="flex items-center justify-between px-2.5 py-1.5 bg-slate-950/60 border border-slate-800/40 rounded-lg text-[9px] font-mono font-bold text-indigo-300 uppercase tracking-wider shadow-sm">
-                        <span>{groupName}</span>
-                        <span className="text-slate-500 font-mono text-[8px] lowercase">{groupItems.length} {groupItems.length === 1 ? 'case' : 'cases'}</span>
+              <div className="space-y-3">
+                {/* Pinned Watched Incidents Section */}
+                {watchedList.length > 0 && (
+                  <div className="bg-amber-950/20 border border-amber-500/30 rounded-xl p-2 space-y-2 shadow-lg">
+                    <div className="flex items-center justify-between text-[10px] font-mono font-bold text-amber-300 uppercase tracking-wider px-1 pt-0.5">
+                      <div className="flex items-center space-x-1.5">
+                        <Icons.Pin className="h-3.5 w-3.5 text-amber-400 fill-amber-400 rotate-45 animate-pulse" />
+                        <span>Watched Incidents ({watchedList.length})</span>
                       </div>
-                      <div className="space-y-2.5 pl-1.5 border-l-2 border-slate-800/30">
-                        {groupItems.map((inc) => renderIncidentCard(inc))}
-                      </div>
+                      <span className="text-[8.5px] text-amber-400/70 font-mono font-normal">Pinned to top for active monitoring</span>
                     </div>
-                  ))
+                    <div className="space-y-2">
+                      {watchedList.map((inc) => renderIncidentCard(inc))}
+                    </div>
+                  </div>
                 )}
-              </AnimatePresence>
+
+                <AnimatePresence mode="popLayout">
+                  {groupBy === 'NONE' ? (
+                    filteredIncidents.map((inc) => renderIncidentCard(inc))
+                  ) : (
+                    Object.entries(groupedIncidents || {}).map(([groupName, groupItems]) => (
+                      <div key={groupName} className="space-y-2 mt-2">
+                        <div className="flex items-center justify-between px-2.5 py-1.5 bg-slate-950/60 border border-slate-800/40 rounded-lg text-[9px] font-mono font-bold text-indigo-300 uppercase tracking-wider shadow-sm">
+                          <span>{groupName}</span>
+                          <span className="text-slate-500 font-mono text-[8px] lowercase">{groupItems.length} {groupItems.length === 1 ? 'case' : 'cases'}</span>
+                        </div>
+                        <div className="space-y-2.5 pl-1.5 border-l-2 border-slate-800/30">
+                          {groupItems.map((inc) => renderIncidentCard(inc))}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </AnimatePresence>
+              </div>
             );
           })()}
         </div>
@@ -7539,6 +8404,407 @@ Generated by SupportPilot AI Platform.
                     Done
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* BULK NOTE MODAL */}
+      <AnimatePresence>
+        {isBulkNoteModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-lg rounded-2xl border border-emerald-500/30 bg-slate-950 p-6 shadow-2xl space-y-4 font-sans"
+            >
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center space-x-3">
+                  <div className="h-9 w-9 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center">
+                    <Icons.FilePlus className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-white font-display uppercase tracking-wider">
+                      Append Bulk Diagnostic Note
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-mono">
+                      Targeting <strong className="text-white">{selectedIncidentIds.length || 1}</strong> selected incident record(s)
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsBulkNoteModalOpen(false)}
+                  className="rounded-lg p-2 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <Icons.X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="space-y-3 font-mono text-xs">
+                <div>
+                  <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">
+                    Note Category
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['Diagnostic', 'Remediation', 'Downstream Alert', 'Customer Communication'] as const).map(cat => (
+                      <button
+                        key={cat}
+                        onClick={() => setBulkNoteCategory(cat)}
+                        className={`px-3 py-1.5 rounded-lg border text-left font-bold transition-all cursor-pointer text-[10px] ${
+                          bulkNoteCategory === cat
+                            ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">
+                    Shared Diagnostic or Context Note
+                  </label>
+                  <textarea
+                    value={bulkNoteContent}
+                    onChange={(e) => setBulkNoteContent(e.target.value)}
+                    placeholder="e.g. Verified memory starvation root cause across cluster pods. Hotfix patch rollout scheduled for 04:00 UTC..."
+                    rows={4}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 text-slate-200 text-xs placeholder-slate-600 outline-none focus:border-emerald-500/50"
+                  />
+                </div>
+              </div>
+
+              <div className="border-t border-slate-800 pt-3 flex items-center justify-between text-xs font-mono">
+                <span className="text-[10px] text-slate-500">
+                  Appends to status history and timeline of target incidents.
+                </span>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => setIsBulkNoteModalOpen(false)}
+                    className="px-3 py-1.5 rounded-lg border border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300 font-bold transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleApplyBulkNote}
+                    disabled={!bulkNoteContent.trim()}
+                    className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold transition-all cursor-pointer flex items-center space-x-1.5"
+                  >
+                    <Icons.CheckCircle2 className="h-4 w-4" />
+                    <span>Apply Bulk Note</span>
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* APPLY SLA OVERRIDE MODAL */}
+      <AnimatePresence>
+        {isSlaOverrideModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-lg rounded-2xl border border-amber-500/30 bg-slate-950 p-6 shadow-2xl space-y-4 font-sans"
+            >
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center space-x-3">
+                  <div className="h-9 w-9 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center">
+                    <Icons.TimerReset className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-white font-display uppercase tracking-wider">
+                      Apply SLA Countdown Override
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-mono">
+                      Targeting <strong className="text-white">{selectedIncidentIds.length || 1}</strong> selected incident record(s)
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsSlaOverrideModalOpen(false)}
+                  className="rounded-lg p-2 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <Icons.X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="space-y-3 font-mono text-xs">
+                <div>
+                  <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">
+                    Override Action
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { type: 'EXTEND_1H', label: '+1 Hour Extension' },
+                      { type: 'EXTEND_4H', label: '+4 Hours Extension' },
+                      { type: 'EXTEND_24H', label: '+24 Hours Extension' },
+                      { type: 'RESET', label: 'Reset to Standard Limit' }
+                    ].map(opt => (
+                      <button
+                        key={opt.type}
+                        onClick={() => setSlaOverrideType(opt.type as any)}
+                        className={`px-3 py-2 rounded-lg border text-left font-bold transition-all cursor-pointer text-[10px] ${
+                          slaOverrideType === opt.type
+                            ? 'bg-amber-600/20 border-amber-500 text-amber-300'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">
+                    SLA Override Reason & Justification
+                  </label>
+                  <input
+                    type="text"
+                    value={slaOverrideReason}
+                    onChange={(e) => setSlaOverrideReason(e.target.value)}
+                    placeholder="e.g. Known downstream GCP maintenance window or false-positive alarm"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 text-xs outline-none focus:border-amber-500/50"
+                  />
+                </div>
+              </div>
+
+              <div className="border-t border-slate-800 pt-3 flex items-center justify-between text-xs font-mono">
+                <span className="text-[10px] text-slate-500">
+                  Logs audit entry for compliance reporting.
+                </span>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => setIsSlaOverrideModalOpen(false)}
+                    className="px-3 py-1.5 rounded-lg border border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300 font-bold transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleApplySlaOverride}
+                    className="px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold transition-all cursor-pointer flex items-center space-x-1.5"
+                  >
+                    <Icons.TimerReset className="h-4 w-4" />
+                    <span>Apply Override</span>
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* QUICK COMPARE MODAL (SIDE-BY-SIDE) */}
+      <AnimatePresence>
+        {isCompareModalOpen && selectedIncidentIds.length === 2 && (() => {
+          const inc1 = incidents.find(i => i.id === selectedIncidentIds[0]);
+          const inc2 = incidents.find(i => i.id === selectedIncidentIds[1]);
+          if (!inc1 || !inc2) return null;
+
+          const s1 = calculateSentimentScore(inc1);
+          const s2 = calculateSentimentScore(inc2);
+          const cat1 = suggestCategory(inc1);
+          const cat2 = suggestCategory(inc2);
+
+          const fields = [
+            { label: 'Incident ID', val1: inc1.id, val2: inc2.id },
+            { label: 'Title', val1: inc1.title, val2: inc2.title },
+            { label: 'Severity', val1: inc1.severity, val2: inc2.severity },
+            { label: 'Status', val1: inc1.status, val2: inc2.status },
+            { label: 'Primary Service', val1: inc1.appName, val2: inc2.appName },
+            { label: 'Assigned Engineer', val1: inc1.assignee || 'Unassigned', val2: inc2.assignee || 'Unassigned' },
+            { label: 'Assigned Pod', val1: inc1.assignedPod || 'Pod-Alpha', val2: inc2.assignedPod || 'Pod-Beta' },
+            { label: 'Sentiment Status', val1: `${s1.score}/100 (${s1.label})`, val2: `${s2.score}/100 (${s2.label})` },
+            { label: 'AI Category', val1: cat1, val2: cat2 },
+            { label: 'Created Timestamp', val1: new Date(inc1.createdAt).toLocaleString(), val2: new Date(inc2.createdAt).toLocaleString() },
+            { label: 'Cloud Provider', val1: inc1.cloudProvider || 'AWS', val2: inc2.cloudProvider || 'GCP' },
+            { label: 'Environment', val1: inc1.environment || 'Production', val2: inc2.environment || 'Production' },
+            { label: 'DB Active Locks', val1: `${inc1.dbState?.locksCount ?? 0} locks`, val2: `${inc2.dbState?.locksCount ?? 0} locks` },
+            { label: 'API Latency', val1: `${inc1.apiCalls?.[0]?.latencyMs ?? 120}ms`, val2: `${inc2.apiCalls?.[0]?.latencyMs ?? 120}ms` },
+          ];
+
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                className="w-full max-w-4xl rounded-2xl border border-amber-500/40 bg-slate-950 p-6 shadow-2xl space-y-4 font-mono max-h-[90vh] flex flex-col"
+              >
+                {/* Modal Header */}
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3 shrink-0">
+                  <div className="flex items-center space-x-3">
+                    <div className="h-9 w-9 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center">
+                      <Icons.ArrowLeftRight className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-sm text-white font-display uppercase tracking-wider flex items-center gap-2">
+                        <span>Side-by-Side Incident Quick Compare</span>
+                        <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-mono font-normal">
+                          Diff View
+                        </span>
+                      </h3>
+                      <p className="text-[10px] text-slate-400">
+                        Comparing <strong className="text-amber-300">{inc1.id}</strong> vs <strong className="text-amber-300">{inc2.id}</strong>
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setIsCompareModalOpen(false)}
+                    className="rounded-lg p-2 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                  >
+                    <Icons.X className="h-5 w-5" />
+                  </button>
+                </div>
+
+                {/* Main Comparison Table */}
+                <div className="flex-1 overflow-y-auto pr-1 space-y-2 custom-scrollbar">
+                  <div className="grid grid-cols-12 bg-slate-900/80 p-2 rounded-xl border border-slate-800 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    <div className="col-span-3 text-slate-500">Metadata Field</div>
+                    <div className="col-span-4 text-indigo-300 flex items-center gap-1">
+                      <Icons.FileText className="h-3 w-3" />
+                      <span>{inc1.id}</span>
+                    </div>
+                    <div className="col-span-4 text-cyan-300 flex items-center gap-1">
+                      <Icons.FileText className="h-3 w-3" />
+                      <span>{inc2.id}</span>
+                    </div>
+                    <div className="col-span-1 text-center text-amber-400">Status</div>
+                  </div>
+
+                  {fields.map((f, idx) => {
+                    const isDiff = f.val1 !== f.val2;
+                    return (
+                      <div
+                        key={idx}
+                        className={`grid grid-cols-12 items-center p-2.5 rounded-xl border text-xs transition-all ${
+                          isDiff
+                            ? 'bg-amber-950/20 border-amber-500/30'
+                            : 'bg-slate-900/30 border-slate-800/60'
+                        }`}
+                      >
+                        <div className="col-span-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          {f.label}
+                        </div>
+                        <div className={`col-span-4 font-medium text-[11px] pr-2 ${isDiff ? 'text-amber-200 font-bold' : 'text-slate-300'}`}>
+                          {f.val1}
+                        </div>
+                        <div className={`col-span-4 font-medium text-[11px] pr-2 ${isDiff ? 'text-amber-200 font-bold' : 'text-slate-300'}`}>
+                          {f.val2}
+                        </div>
+                        <div className="col-span-1 flex justify-center">
+                          {isDiff ? (
+                            <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                              DIFF
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-slate-800/40 text-slate-500">
+                              MATCH
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Compare Action Controls */}
+                <div className="border-t border-slate-800 pt-3 flex items-center justify-between text-xs shrink-0">
+                  <div className="text-[10px] text-slate-400">
+                    Showing <strong className="text-amber-300">{fields.filter(f => f.val1 !== f.val2).length}</strong> detected difference(s)
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => {
+                        handleBulkAutoMerge();
+                        setIsCompareModalOpen(false);
+                      }}
+                      className="px-3.5 py-1.5 rounded-lg border border-purple-500/40 bg-purple-950/50 hover:bg-purple-900/80 text-purple-200 font-bold transition-all cursor-pointer flex items-center space-x-1.5 text-[11px]"
+                    >
+                      <Icons.GitMerge className="h-3.5 w-3.5 text-purple-400" />
+                      <span>Auto-Merge Pair</span>
+                    </button>
+                    <button
+                      onClick={() => setIsCompareModalOpen(false)}
+                      className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-all cursor-pointer text-[11px]"
+                    >
+                      Close Compare
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
+      </AnimatePresence>
+
+      {/* CONFIRM BULK ACTION MODAL DIALOG */}
+      <AnimatePresence>
+        {confirmDialog?.isOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="w-full max-w-lg rounded-2xl border border-rose-500/40 bg-slate-950 p-6 shadow-2xl space-y-4 font-mono"
+            >
+              <div className="flex items-center space-x-3 border-b border-slate-800 pb-3">
+                <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${
+                  confirmDialog.actionType === 'AUTO_MERGE' 
+                    ? 'bg-purple-500/10 border border-purple-500/30 text-purple-400' 
+                    : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
+                }`}>
+                  {confirmDialog.actionType === 'AUTO_MERGE' ? (
+                    <Icons.GitMerge className="h-5 w-5" />
+                  ) : (
+                    <Icons.ShieldAlert className="h-5 w-5" />
+                  )}
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-white uppercase tracking-wider font-display">
+                    {confirmDialog.title}
+                  </h3>
+                  <p className="text-[10px] text-slate-400 font-mono">
+                    Target Selection: <span className="text-amber-300 font-bold">{confirmDialog.targetCount} Incident(s)</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3 text-xs text-slate-300 leading-relaxed font-sans">
+                {confirmDialog.description}
+              </div>
+
+              <div className="bg-amber-950/30 border border-amber-500/30 rounded-lg p-2.5 flex items-center space-x-2 text-[10px] text-amber-200 font-sans">
+                <Icons.AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
+                <span>This operation will immediately update incident state and record a permanent entry in the system audit log.</span>
+              </div>
+
+              <div className="flex items-center justify-end space-x-3 pt-2">
+                <button
+                  onClick={() => setConfirmDialog(null)}
+                  className="px-4 py-2 rounded-xl border border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300 font-bold text-xs transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDialog.onConfirm}
+                  className={`px-5 py-2 rounded-xl text-white font-bold text-xs transition-all cursor-pointer flex items-center space-x-1.5 shadow-lg ${
+                    confirmDialog.actionType === 'AUTO_MERGE'
+                      ? 'bg-purple-600 hover:bg-purple-500 shadow-purple-900/30'
+                      : 'bg-rose-600 hover:bg-rose-500 shadow-rose-900/30'
+                  }`}
+                >
+                  <Icons.CheckCircle2 className="h-4 w-4" />
+                  <span>Confirm Action</span>
+                </button>
               </div>
             </motion.div>
           </div>

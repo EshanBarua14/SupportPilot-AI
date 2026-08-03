@@ -131,6 +131,10 @@ export interface Incident {
   cloudProvider?: 'AWS' | 'GCP' | 'Azure' | 'On-Prem';
   environment?: 'Production' | 'Staging' | 'Development';
   statusHistory?: Array<{ status: 'OPEN' | 'INVESTIGATING' | 'SOLVED' | 'ESCALATED'; timestamp: string; changedBy: string; message?: string }>;
+  sentiment?: 'Frustrated' | 'Tense' | 'Stable' | 'Calm';
+  category?: 'Database' | 'Network' | 'API' | 'UI' | 'Infrastructure' | 'Auth';
+  isWatched?: boolean;
+  assignedPod?: string;
 }
 
 export interface SupportAgent {
