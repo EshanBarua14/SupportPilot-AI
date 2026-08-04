@@ -52,35 +52,25 @@ async function generateContentWithFallback(ai: any, params: { model: string; con
   for (let attempt = 0; attempt < modelsToTry.length; attempt++) {
     const modelCandidate = modelsToTry[attempt];
     
-    // Retry up to 2 times for transient errors (503/429/500/504) on the same candidate model before switching
-    for (let retry = 0; retry < 2; retry++) {
-      try {
-        const response = await ai.models.generateContent({
-          ...params,
-          model: modelCandidate,
-        });
-        return response;
-      } catch (err: any) {
-        lastError = err;
-        if (err?.message?.includes('GEMINI_API_KEY') || err?.status === 401) {
-          throw err;
-        }
-
-        const isTransient = err?.status === 503 || err?.status === 429 || err?.status === 500 || err?.status === 504 || (err?.message && (err.message.includes('503') || err.message.includes('overloaded') || err.message.includes('429')));
-        
-        if (isTransient && retry < 1) {
-          // Backoff briefly before retrying same candidate model
-          await new Promise(res => setTimeout(res, 400 * (retry + 1)));
-          continue;
-        }
-
-        console.warn(`Gemini API call with model ${modelCandidate} failed (${err?.status || err?.message || err}). Trying fallback model...`);
-        break;
+    try {
+      const response = await ai.models.generateContent({
+        ...params,
+        model: modelCandidate,
+      });
+      return response;
+    } catch (err: any) {
+      lastError = err;
+      if (err?.message?.includes('GEMINI_API_KEY') || err?.status === 401) {
+        throw err;
       }
-    }
 
-    if (attempt < modelsToTry.length - 1) {
-      await new Promise(res => setTimeout(res, 300));
+      const isRateLimit = err?.status === 429 || (err?.message && err.message.includes('429'));
+      
+      console.warn(`Gemini API call with model ${modelCandidate} failed (${err?.status || err?.message || err}). ${isRateLimit ? 'Rate limit hit (429), switching to next model...' : 'Trying fallback model...'}`);
+      
+      if (attempt < modelsToTry.length - 1) {
+        await new Promise(res => setTimeout(res, 200));
+      }
     }
   }
   throw lastError;
