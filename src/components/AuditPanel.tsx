@@ -19,6 +19,7 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
   const [filterModule, setFilterModule] = useState('ALL');
   const [filterAction, setFilterAction] = useState('ALL');
   const [filterStatus, setFilterStatus] = useState('ALL');
+  const [userActivityFilter, setUserActivityFilter] = useState<'ALL' | 'AI_AGENT' | 'HUMAN_MANUAL'>('ALL');
   const [filterStartDate, setFilterStartDate] = useState('');
   const [filterEndDate, setFilterEndDate] = useState('');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
@@ -42,6 +43,20 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
     const matchesAction = filterAction === 'ALL' || log.action === filterAction;
     const matchesStatus = filterStatus === 'ALL' || log.status === filterStatus;
 
+    // AI Agent vs Human activity categorization
+    const isAiAgent = log.operator.toLowerCase().includes('agent') ||
+                      log.operator.toLowerCase().includes('ai') ||
+                      log.operator.toLowerCase().includes('bot') ||
+                      log.operator.toLowerCase().includes('system') ||
+                      log.module.toLowerCase().includes('agent') ||
+                      log.module.toLowerCase().includes('ai') ||
+                      log.action.toLowerCase().includes('auto') ||
+                      log.action.toLowerCase().includes('gemini');
+
+    const matchesUserActivity = userActivityFilter === 'ALL' ||
+      (userActivityFilter === 'AI_AGENT' && isAiAgent) ||
+      (userActivityFilter === 'HUMAN_MANUAL' && !isAiAgent);
+
     let matchesDateRange = true;
     if (filterStartDate) {
       matchesDateRange = matchesDateRange && new Date(log.timestamp) >= new Date(filterStartDate);
@@ -52,7 +67,7 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
       matchesDateRange = matchesDateRange && new Date(log.timestamp) <= endOfBoundary;
     }
 
-    return matchesSearch && matchesOperator && matchesActorName && matchesModule && matchesAction && matchesStatus && matchesDateRange;
+    return matchesSearch && matchesOperator && matchesActorName && matchesModule && matchesAction && matchesStatus && matchesUserActivity && matchesDateRange;
   }).sort((a, b) => {
     const dateA = new Date(a.timestamp).getTime();
     const dateB = new Date(b.timestamp).getTime();
@@ -66,6 +81,7 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
     setFilterModule('ALL');
     setFilterAction('ALL');
     setFilterStatus('ALL');
+    setUserActivityFilter('ALL');
     setFilterStartDate('');
     setFilterEndDate('');
     setSortOrder('desc');
@@ -344,11 +360,57 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
 
             {/* Advanced Filters Bar */}
             <div className="bg-slate-950/40 border border-slate-800 p-4 rounded-xl space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-900 pb-2">
-                <span className="text-xxs font-bold text-indigo-400 flex items-center space-x-1.5 font-display uppercase tracking-wider">
-                  <Icons.SlidersHorizontal className="h-3.5 w-3.5" />
-                  <span>Interactive Audit Query Filters</span>
-                </span>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-900 pb-2.5">
+                <div className="flex items-center space-x-3">
+                  <span className="text-xxs font-bold text-indigo-400 flex items-center space-x-1.5 font-display uppercase tracking-wider shrink-0">
+                    <Icons.SlidersHorizontal className="h-3.5 w-3.5" />
+                    <span>Interactive Audit Query Filters</span>
+                  </span>
+
+                  {/* Filter by User Activity Toggle */}
+                  <div className="flex items-center p-0.5 bg-slate-900/90 border border-slate-800 rounded-lg text-xxs font-mono">
+                    <button
+                      type="button"
+                      onClick={() => setUserActivityFilter('ALL')}
+                      className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                        userActivityFilter === 'ALL'
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                      title="Show all audit entries across AI agents and human operators"
+                    >
+                      <Icons.Layers className="h-3 w-3" />
+                      <span>All Activity</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUserActivityFilter('AI_AGENT')}
+                      className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                        userActivityFilter === 'AI_AGENT'
+                          ? 'bg-cyan-600 text-white shadow-sm shadow-cyan-600/30'
+                          : 'text-slate-400 hover:text-cyan-300'
+                      }`}
+                      title="Isolate audit entries generated specifically by automated AI agent actions"
+                    >
+                      <Icons.Bot className="h-3 w-3 text-cyan-300" />
+                      <span>AI Agent Actions</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUserActivityFilter('HUMAN_MANUAL')}
+                      className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                        userActivityFilter === 'HUMAN_MANUAL'
+                          ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-600/30'
+                          : 'text-slate-400 hover:text-emerald-300'
+                      }`}
+                      title="Isolate audit entries generated by human-initiated manual operator changes"
+                    >
+                      <Icons.UserCheck className="h-3 w-3 text-emerald-300" />
+                      <span>Human Manual Changes</span>
+                    </button>
+                  </div>
+                </div>
+
                 <div className="flex items-center space-x-2">
                   <button
                     type="button"

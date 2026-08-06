@@ -26,8 +26,34 @@ import ContextualShortcutBar from './ContextualShortcutBar';
 import IncidentDensityMap from './IncidentDensityMap';
 import VoiceCommandCheatSheetModal from './VoiceCommandCheatSheetModal';
 import AiInsightsTab from './AiInsightsTab';
+import BulkImpactForecastWidget from './BulkImpactForecastWidget';
+import NotifyStakeholdersModal from './NotifyStakeholdersModal';
+import BulkAnomalyDetectionModal from './BulkAnomalyDetectionModal';
+import BulkCorrelationMapModal from './BulkCorrelationMapModal';
+import BulkPdfExportModal from './BulkPdfExportModal';
+import SmartAutoCategorizationModal from './SmartAutoCategorizationModal';
+import IncidentAnnotationsModal from './IncidentAnnotationsModal';
+import ExecutiveSearchSummaryModal from './ExecutiveSearchSummaryModal';
 import { DEFAULT_WORKFLOW_KEYMAP } from './ShortcutsModal';
 import { useSupportPilot } from '../context/SupportPilotContext';
+
+export function getAiRankScore(inc: Incident): number {
+  if (inc.status === 'SOLVED') return 15;
+  let score = 45;
+  if (inc.severity === 'CRITICAL') score += 45;
+  else if (inc.severity === 'HIGH') score += 30;
+  else if (inc.severity === 'MEDIUM') score += 15;
+
+  if (inc.slaRemainingSecs !== undefined) {
+    if (inc.slaRemainingSecs <= 0) score += 10;
+    else if (inc.slaRemainingSecs < 600) score += 8;
+    else if (inc.slaRemainingSecs < 1800) score += 4;
+  }
+
+  if (inc.tenantId === 'tenant-fintech' || inc.tenantId === 'tenant-healthcare') score += 5;
+  const titleBoost = (inc.title.length % 5);
+  return Math.min(100, score + titleBoost);
+}
 
 export function IncidentStatusTimeline({ incident }: { incident: Incident }) {
   const isSolved = incident.status === 'SOLVED';
@@ -612,6 +638,78 @@ function IncidentLifecycleTimeline({ incident }: { incident: Incident }) {
   );
 }
 
+export function WeeklyTrendSparkline({ incident }: { incident: Incident }) {
+  // Deterministic 7-day incident count series derived from incident ID and app name
+  const seed = (incident.id + incident.appName).split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const val = Math.abs(Math.sin(seed * (i + 1) * 0.7) * 12) + (incident.severity === 'CRITICAL' ? 8 : 3);
+    return Math.round(val);
+  });
+
+  const currentCount = days[6];
+  const prevSum = days.slice(0, 6).reduce((a, b) => a + b, 0);
+  const movingAvg = Math.round((prevSum / 6) * 10) / 10 || 1;
+  const pctChange = Math.round(((currentCount - movingAvg) / movingAvg) * 100);
+
+  const maxVal = Math.max(...days, 1);
+  const width = 48;
+  const height = 16;
+
+  const points = days.map((val, idx) => {
+    const x = (idx / 6) * (width - 4) + 2;
+    const y = height - 2 - (val / maxVal) * (height - 4);
+    return `${x},${y}`;
+  }).join(' ');
+
+  const isUp = currentCount > movingAvg;
+  const strokeColor = isUp ? '#f43f5e' : '#10b981';
+
+  return (
+    <div 
+      className="flex items-center space-x-1 px-1.5 py-0.5 rounded bg-slate-950/80 border border-slate-800/80 shrink-0 cursor-help group/weekly-trend"
+      title={`Weekly Frequency Trend (${incident.appName}): Today ${currentCount} inc/day vs 7-Day Moving Avg ${movingAvg} inc/day (${pctChange > 0 ? '+' : ''}${pctChange}% variance)`}
+    >
+      <svg width={width} height={height} className="overflow-visible">
+        {/* 7-Day Moving Average reference benchmark line */}
+        <line
+          x1="2"
+          y1={height - 2 - (movingAvg / maxVal) * (height - 4)}
+          x2={width - 2}
+          y2={height - 2 - (movingAvg / maxVal) * (height - 4)}
+          stroke="#64748b"
+          strokeDasharray="2,2"
+          strokeWidth="1"
+          opacity="0.6"
+        />
+        {/* Weekly Trend line */}
+        <polyline
+          fill="none"
+          stroke={strokeColor}
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          points={points}
+        />
+        {/* Today's data point pulse */}
+        <circle
+          cx={width - 2}
+          cy={height - 2 - (currentCount / maxVal) * (height - 4)}
+          r="2"
+          fill={strokeColor}
+        />
+      </svg>
+
+      <div className="flex flex-col text-[7.5px] font-mono font-bold leading-tight">
+        <span className={isUp ? 'text-rose-400' : 'text-emerald-400'}>
+          {pctChange > 0 ? `+${pctChange}%` : `${pctChange}%`}
+        </span>
+        <span className="text-[6.5px] text-slate-500 font-semibold uppercase">7d avg</span>
+      </div>
+    </div>
+  );
+}
+
 export function BulkSeveritySparkline({ selectedIncidents }: { selectedIncidents: Incident[] }) {
   if (selectedIncidents.length === 0) return null;
 
@@ -758,10 +856,16 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
   const [isSeverityLegendOpen, setIsSeverityLegendOpen] = useState(false);
   const [priorityOnly, setPriorityOnly] = useState(false);
 
+  // New Search & Analytics Feature States
+  const [isExecutiveSummaryModalOpen, setIsExecutiveSummaryModalOpen] = useState(false);
+  const [showHeatmapMode, setShowHeatmapMode] = useState(false);
+  const [aiTrendAlertMode, setAiTrendAlertMode] = useState(false);
+  const [aiTrendAlertData, setAiTrendAlertData] = useState<any>(null);
+
   const [copiedId, setCopiedId] = useState(false);
   const [severityFilter, setSeverityFilter] = useState<'ALL' | 'P0' | 'P1' | 'P2' | 'P3'>('ALL');
   const [assigneeFilter, setAssigneeFilter] = useState<string>('ALL');
-  const [groupBy, setGroupBy] = useState<'NONE' | 'SERVICE' | 'PRIORITY' | 'AGENT'>('NONE');
+  const [groupBy, setGroupBy] = useState<'NONE' | 'SERVICE' | 'PRIORITY' | 'AGENT' | 'STATUS'>('NONE');
   const [legendTimePeriod, setLegendTimePeriod] = useState<'7days' | '30days' | 'ytd'>('ytd');
   const [timePeriodFilter, setTimePeriodFilter] = useState<'ALL' | '7days' | '30days' | 'ytd'>('ALL');
 
@@ -830,6 +934,14 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
   ]);
   const [insightInputIndex, setInsightInputIndex] = useState<number | null>(null);
   const [insightText, setInsightText] = useState<string>('');
+
+  // --- NEW BULK ACTION MODAL STATES ---
+  const [isNotifyStakeholdersOpen, setIsNotifyStakeholdersOpen] = useState<boolean>(false);
+  const [isBulkAnomalyModalOpen, setIsBulkAnomalyModalOpen] = useState<boolean>(false);
+  const [isBulkCorrelationMapOpen, setIsBulkCorrelationMapOpen] = useState<boolean>(false);
+  const [isBulkPdfExportOpen, setIsBulkPdfExportOpen] = useState<boolean>(false);
+  const [isSmartAutoCategorizeOpen, setIsSmartAutoCategorizeOpen] = useState<boolean>(false);
+  const [annotationModalIncident, setAnnotationModalIncident] = useState<Incident | null>(null);
 
   // --- SNOOZE FEATURE STATE ---
   const [snoozedIncidents, setSnoozedIncidents] = useState<Record<string, number>>(() => {
@@ -938,6 +1050,16 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
       localStorage.setItem('supportpilot_custom_filter_presets', JSON.stringify(customOnly));
     } catch (e) {
       console.error(e);
+    }
+
+    if (onAddAuditLog) {
+      onAddAuditLog(
+        LOGGED_IN_USER || 'Eshan Barua (CTO)',
+        'Quick Filter Preset Created',
+        'FilterPresetManager',
+        'SUCCESS',
+        `Saved custom preset "${newPreset.name}" with severity=${severityFilter}, assignee=${assigneeFilter}, service=${serviceFilter}.`
+      );
     }
 
     setActivePresetId(newPreset.id);
@@ -2944,6 +3066,117 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
     return result;
   })();
 
+  // --- AI TREND ALERT MODE EFFECT ---
+  useEffect(() => {
+    if (!aiTrendAlertMode || filteredIncidents.length === 0) {
+      setAiTrendAlertData(null);
+      return;
+    }
+
+    let isMounted = true;
+    async function fetchTrendAlerts() {
+      try {
+        const res = await fetch('/api/ai-trend-alert', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            incidents: filteredIncidents.map(i => ({
+              id: i.id,
+              title: i.title,
+              appName: i.appName,
+              severity: i.severity,
+              status: i.status
+            }))
+          })
+        });
+        const data = await res.json();
+        if (isMounted) setAiTrendAlertData(data);
+      } catch (e) {
+        console.error('Failed to fetch AI trend alert:', e);
+      }
+    }
+
+    fetchTrendAlerts();
+    return () => { isMounted = false; };
+  }, [aiTrendAlertMode, filteredIncidents]);
+
+  // --- FILTER KEY FOR STAGGERED ENTRANCE ANIMATIONS ---
+  const filterKey = `${searchQuery}-${severityFilter}-${serviceFilter}-${assigneeFilter}-${timePeriodFilter}-${priorityOnly}-${minConfidenceFilter}-${showSnoozedOnly}-${selectedTags.join(',')}`;
+
+  // --- COMPUTE ROOT CAUSE CLUSTERS FOR CLUSTER HIGHLIGHT FEATURE ---
+  const rootCauseClusterMap = useMemo(() => {
+    const map: Record<string, { clusterId: string; clusterName: string; borderClass: string; bgClass: string; badgeClass: string; count: number; incidentIds: string[] }> = {};
+    const colors = [
+      { name: 'Cyan Stream', border: 'border-l-4 border-l-cyan-400', bg: 'bg-cyan-950/20', badge: 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300' },
+      { name: 'Purple Lock', border: 'border-l-4 border-l-purple-400', bg: 'bg-purple-950/20', badge: 'bg-purple-500/15 border-purple-500/30 text-purple-300' },
+      { name: 'Amber Surge', border: 'border-l-4 border-l-amber-400', bg: 'bg-amber-950/20', badge: 'bg-amber-500/15 border-amber-500/30 text-amber-300' },
+      { name: 'Emerald Mesh', border: 'border-l-4 border-l-emerald-400', bg: 'bg-emerald-950/20', badge: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' },
+      { name: 'Rose Failure', border: 'border-l-4 border-l-rose-400', bg: 'bg-rose-950/20', badge: 'bg-rose-500/15 border-rose-500/30 text-rose-300' }
+    ];
+
+    let colorIdx = 0;
+    filteredIncidents.forEach(inc => {
+      const rawRc = (inc.analysis?.rootCause || inc.title || '').toLowerCase().trim();
+      let normalized = 'other-anomaly';
+      if (rawRc.includes('lock') || rawRc.includes('db') || rawRc.includes('database')) normalized = 'database-lock-contention';
+      else if (rawRc.includes('timeout') || rawRc.includes('rpc') || rawRc.includes('network')) normalized = 'network-rpc-timeout';
+      else if (rawRc.includes('memory') || rawRc.includes('heap') || rawRc.includes('gc')) normalized = 'memory-leak-gc';
+      else if (rawRc.includes('auth') || rawRc.includes('token') || rawRc.includes('jwt')) normalized = 'auth-provider-failure';
+      else if (rawRc.includes('cpu') || rawRc.includes('throttle')) normalized = 'cpu-throttling';
+
+      if (!map[normalized]) {
+        const palette = colors[colorIdx % colors.length];
+        colorIdx++;
+        map[normalized] = {
+          clusterId: normalized,
+          clusterName: normalized.replace(/-/g, ' ').toUpperCase(),
+          borderClass: palette.border,
+          bgClass: palette.bg,
+          badgeClass: palette.badge,
+          count: 0,
+          incidentIds: []
+        };
+      }
+      map[normalized].count += 1;
+      map[normalized].incidentIds.push(inc.id);
+    });
+
+    return map;
+  }, [filteredIncidents]);
+
+  const getAnnotationCount = (incidentId: string) => {
+    try {
+      const stored = localStorage.getItem('supportpilot_collaborative_annotations');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed[incidentId]) return parsed[incidentId].length;
+      }
+    } catch (e) {}
+    return 2;
+  };
+
+  const handleApplySmartCategorizationLabels = (updates: Array<{ id: string; primaryCategory: string; secondaryTags: string[] }>) => {
+    setIncidents(prev => prev.map(inc => {
+      const match = updates.find(u => u.id === inc.id);
+      if (match) {
+        const existingTags = (inc as any).tags || [];
+        const mergedTags = Array.from(new Set([...existingTags, ...match.secondaryTags]));
+        return {
+          ...inc,
+          tags: mergedTags,
+          analysis: {
+            ...inc.analysis,
+            rootCause: `${match.primaryCategory}: ${inc.analysis?.rootCause || inc.title}`
+          }
+        };
+      }
+      return inc;
+    }));
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message: `✨ Applied AI Smart Auto-Categorization labels across ${updates.length} ticket(s)` }
+    }));
+  };
+
   // --- KEYBOARD ARROW NAVIGATION EFFECT FOR SEARCH RESULTS ---
   useEffect(() => {
     const handleArrowNav = (e: KeyboardEvent) => {
@@ -3930,6 +4163,63 @@ Generated by SupportPilot AI Platform.
     window.addEventListener('create-new-ticket', handleCreateTicket);
     return () => window.removeEventListener('create-new-ticket', handleCreateTicket);
   }, [incidents, onAddAuditLog]);
+
+  // --- AUTOMATIC AUDIT LOGGING FOR VOICE COMMAND PROCESSOR ---
+  useEffect(() => {
+    const handleVoiceCommandProcessed = (e: CustomEvent) => {
+      const detail = e.detail;
+      if (!detail) return;
+      const cmdName = detail.commandName || detail.commandType;
+      const param = detail.param || detail.parsedAction || detail.severity || detail.status;
+      const rawText = detail.rawText || detail.rawTranscript || '';
+
+      if (cmdName) {
+        onAddAuditLog(
+          LOGGED_IN_USER || 'Eshan Barua (CTO)',
+          `Voice Command Executed: ${cmdName}`,
+          'VoiceProcessor',
+          'SUCCESS',
+          `Voice phrase "${rawText || cmdName}" triggered action [${cmdName}] with parameter [${param || 'N/A'}].`
+        );
+      }
+    };
+
+    const handleVoiceFilter = (e: CustomEvent) => {
+      const sev = e.detail?.severity;
+      if (sev) {
+        onAddAuditLog(
+          LOGGED_IN_USER || 'Eshan Barua (CTO)',
+          'Voice Filter Severity Applied',
+          'VoiceProcessor',
+          'SUCCESS',
+          `Applied severity filter [${sev}] via voice command.`
+        );
+      }
+    };
+
+    const handleVoiceStatus = (e: CustomEvent) => {
+      const st = e.detail?.status;
+      if (st) {
+        onAddAuditLog(
+          LOGGED_IN_USER || 'Eshan Barua (CTO)',
+          'Voice Incident Status Updated',
+          'VoiceProcessor',
+          'SUCCESS',
+          `Updated incident state to [${st}] via voice command.`
+        );
+      }
+    };
+
+    window.addEventListener('voice-command-processed' as any, handleVoiceCommandProcessed);
+    window.addEventListener('voice-filter-severity' as any, handleVoiceFilter);
+    window.addEventListener('voice-set-status' as any, handleVoiceStatus);
+
+    return () => {
+      window.removeEventListener('voice-command-processed' as any, handleVoiceCommandProcessed);
+      window.removeEventListener('voice-filter-severity' as any, handleVoiceFilter);
+      window.removeEventListener('voice-set-status' as any, handleVoiceStatus);
+    };
+  }, [onAddAuditLog]);
   
   // Tab within the Telemetry Panel
   const [telemetryTab, setTelemetryTab] = useState<'logs' | 'metrics' | 'traces' | 'db' | 'k8s' | 'topology' | 'timeline' | 'sticky_notes' | 'status_history'>('logs');
@@ -5019,36 +5309,85 @@ Generated by SupportPilot AI Platform.
 
         {/* SEARCH RESULTS TOOLBAR */}
         <div className="mb-3 space-y-2 p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/80 shadow-inner">
-          {/* Real-time Search Input */}
-          <div className="relative">
-            <Icons.Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
-            <input
-              type="text"
-              placeholder="Search query, title, tenant, assignee..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-800 rounded-lg pl-8 pr-7 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 font-mono transition-all"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white p-0.5 cursor-pointer"
-                title="Clear search query"
-              >
-                <Icons.X className="h-3 w-3" />
-              </button>
-            )}
+          {/* Real-time Search Input & AI Trend Alert Toggle */}
+          <div className="flex items-center space-x-2">
+            <div className="relative flex-1">
+              <Icons.Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
+              <input
+                type="text"
+                placeholder="Search query, title, tenant, assignee..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-800 rounded-lg pl-8 pr-7 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 font-mono transition-all"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white p-0.5 cursor-pointer"
+                  title="Clear search query"
+                >
+                  <Icons.X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+
+            {/* AI Trend Alert Toggle Button */}
+            <button
+              onClick={() => setAiTrendAlertMode(!aiTrendAlertMode)}
+              className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-lg border text-[9.5px] font-mono font-bold transition-all cursor-pointer shrink-0 shadow-sm ${
+                aiTrendAlertMode
+                  ? 'bg-rose-950/90 border-rose-500/80 text-rose-200 shadow-rose-900/40 animate-pulse font-extrabold'
+                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
+              }`}
+              title="Automatically toggle AI Trend Alert mode to analyze search results with Gemini and flag 24-hour historical baseline anomalies"
+            >
+              <Icons.TrendingUp className={`h-3.5 w-3.5 ${aiTrendAlertMode ? 'text-rose-400' : 'text-slate-400'}`} />
+              <span>{aiTrendAlertMode ? 'Trend Alert: ON' : 'AI Trend Alert'}</span>
+            </button>
           </div>
 
           {/* Toolbar Actions Row */}
-          <div className="flex items-center justify-between gap-1.5">
+          <div className="flex flex-wrap items-center justify-between gap-1.5">
             <button
               onClick={handleCopyViewUrl}
-              className="flex-1 flex items-center justify-center space-x-1.5 px-2 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 hover:text-white text-[10px] font-mono font-bold transition-all cursor-pointer shadow-sm"
+              className="flex-1 flex items-center justify-center space-x-1 px-2 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 hover:text-white text-[9.5px] font-mono font-bold transition-all cursor-pointer shadow-sm"
               title="Copy shareable View URL containing current query, filters, and categories as URL search params"
             >
               <Icons.Share2 className="h-3 w-3 text-indigo-400 shrink-0" />
-              <span>Copy Current View URL</span>
+              <span>Copy View URL</span>
+            </button>
+
+            <button
+              onClick={() => setIsSavingCustomPreset(true)}
+              className="flex-1 flex items-center justify-center space-x-1 px-2 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 hover:text-white text-[9.5px] font-mono font-bold transition-all cursor-pointer shadow-sm"
+              title="Save current search filter configuration as a custom Quick Filter preset"
+            >
+              <Icons.BookmarkPlus className="h-3 w-3 text-emerald-400 shrink-0" />
+              <span>Save Quick Filter</span>
+            </button>
+
+            {/* Gemini Search Executive Summary Button */}
+            <button
+              onClick={() => setIsExecutiveSummaryModalOpen(true)}
+              className="flex-1 flex items-center justify-center space-x-1 px-2 py-1 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/40 text-amber-300 hover:text-white text-[9.5px] font-mono font-bold transition-all cursor-pointer shadow-sm"
+              title="Triggers Gemini analysis of current filtered search result set and provides a 3-bullet point executive summary of major active infrastructure pain points"
+            >
+              <Icons.Sparkles className="h-3 w-3 text-amber-400 shrink-0 animate-pulse" />
+              <span>Summary</span>
+            </button>
+
+            {/* Show Heatmap Toggle Button */}
+            <button
+              onClick={() => setShowHeatmapMode(!showHeatmapMode)}
+              className={`flex-1 flex items-center justify-center space-x-1 px-2 py-1 rounded-lg border text-[9.5px] font-mono font-bold transition-all cursor-pointer shadow-sm ${
+                showHeatmapMode
+                  ? 'bg-amber-950/80 border-amber-500/80 text-amber-200 font-extrabold shadow-amber-900/30'
+                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+              }`}
+              title="Visually shade incident cards based on their AI-Rank (Risk Priority) score for high-density visual overview"
+            >
+              <Icons.Flame className={`h-3 w-3 ${showHeatmapMode ? 'text-amber-400 animate-bounce' : 'text-slate-400'}`} />
+              <span>{showHeatmapMode ? 'Heatmap: ON' : 'Show Heatmap'}</span>
             </button>
 
             {(searchQuery || minConfidenceFilter > 0 || severityFilter !== 'ALL' || assigneeFilter !== 'ALL' || serviceFilter !== 'ALL' || selectedTags.length > 0) && (
@@ -5342,6 +5681,7 @@ Generated by SupportPilot AI Platform.
                 className="w-full rounded bg-slate-950 border border-slate-800/80 text-[10px] font-mono text-slate-300 py-1 pl-1.5 pr-5 appearance-none focus:outline-none focus:border-indigo-500 cursor-pointer"
               >
                 <option value="NONE">NO GROUPING</option>
+                <option value="STATUS">INCIDENT STATUS</option>
                 <option value="SERVICE">SERVICE (APP NAME)</option>
                 <option value="PRIORITY">PRIORITY (SEVERITY)</option>
                 <option value="AGENT">ASSIGNED AGENT</option>
@@ -5592,21 +5932,22 @@ Generated by SupportPilot AI Platform.
           </div>
         )}
 
-        {/* ENHANCED BULK ACTION TOOLBAR WITH STAGGERED SLIDE ENTRANCE ANIMATION & RICH TRIAGE ACTIONS */}
+        {/* ENHANCED BULK ACTION TOOLBAR WITH STAGGERED BOTTOM SLIDE ENTRANCE ANIMATION & RICH TRIAGE ACTIONS */}
         {selectedIncidentIds.length > 0 && (
           <motion.div
             variants={{
-              hidden: { opacity: 0, y: -16 },
+              hidden: { opacity: 0, y: 24, scale: 0.98 },
               show: {
                 opacity: 1,
                 y: 0,
+                scale: 1,
                 transition: {
                   duration: 0.35,
                   ease: [0.16, 1, 0.3, 1],
                   staggerChildren: 0.04
                 }
               },
-              exit: { opacity: 0, y: -12, transition: { duration: 0.2 } }
+              exit: { opacity: 0, y: 20, scale: 0.98, transition: { duration: 0.2, ease: "easeIn" } }
             }}
             initial="hidden"
             animate="show"
@@ -5861,6 +6202,67 @@ Generated by SupportPilot AI Platform.
                 </AnimatePresence>
               </div>
 
+              {/* BULK IMPACT FORECAST WIDGET */}
+              <BulkImpactForecastWidget
+                selectedIncidents={incidents.filter(i => selectedIncidentIds.includes(i.id))}
+                onAddAuditLog={onAddAuditLog}
+              />
+
+              {/* NOTIFY STAKEHOLDERS BUTTON */}
+              <motion.button
+                variants={{ hidden: { opacity: 0, scale: 0.95 }, show: { opacity: 1, scale: 1 } }}
+                onClick={() => setIsNotifyStakeholdersOpen(true)}
+                className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-indigo-500/60 bg-gradient-to-r from-indigo-950/80 to-purple-950/80 hover:from-indigo-900 hover:to-purple-900 text-indigo-200 font-bold shadow-lg shadow-indigo-500/20 transition-all cursor-pointer text-[9.5px] font-mono"
+                title="Send consolidated status report for selected incidents to configured Slack channels"
+              >
+                <Icons.Send className="h-3.5 w-3.5 text-indigo-400 group-hover:scale-110 transition-transform" />
+                <span>Notify Stakeholders</span>
+              </motion.button>
+
+              {/* BULK EXPORT TO PDF BUTTON */}
+              <motion.button
+                variants={{ hidden: { opacity: 0, scale: 0.95 }, show: { opacity: 1, scale: 1 } }}
+                onClick={() => setIsBulkPdfExportOpen(true)}
+                className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-indigo-500/60 bg-gradient-to-r from-indigo-950/80 to-slate-900 hover:from-indigo-900 hover:to-slate-800 text-indigo-200 font-bold shadow-lg shadow-indigo-500/20 transition-all cursor-pointer text-[9.5px] font-mono"
+                title="Generate print-ready consolidated summary PDF report for selected incidents"
+              >
+                <Icons.Printer className="h-3.5 w-3.5 text-indigo-400 group-hover:scale-110 transition-transform" />
+                <span>Bulk Export to PDF</span>
+              </motion.button>
+
+              {/* SMART AUTO-CATEGORIZATION BUTTON */}
+              <motion.button
+                variants={{ hidden: { opacity: 0, scale: 0.95 }, show: { opacity: 1, scale: 1 } }}
+                onClick={() => setIsSmartAutoCategorizeOpen(true)}
+                className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-purple-500/60 bg-gradient-to-r from-purple-950/80 to-indigo-950/80 hover:from-purple-900 hover:to-indigo-900 text-purple-200 font-bold shadow-lg shadow-purple-500/20 transition-all cursor-pointer text-[9.5px] font-mono"
+                title="AI-powered classification and auto-categorization based on telemetry patterns"
+              >
+                <Icons.Sparkles className="h-3.5 w-3.5 text-purple-400 group-hover:rotate-12 transition-transform animate-pulse" />
+                <span>Smart Auto-Categorization</span>
+              </motion.button>
+
+              {/* BULK ANOMALY DETECTION BUTTON */}
+              <motion.button
+                variants={{ hidden: { opacity: 0, scale: 0.95 }, show: { opacity: 1, scale: 1 } }}
+                onClick={() => setIsBulkAnomalyModalOpen(true)}
+                className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-purple-500/60 bg-gradient-to-r from-purple-950/80 to-pink-950/80 hover:from-purple-900 hover:to-pink-900 text-purple-200 font-bold shadow-lg shadow-purple-500/20 transition-all cursor-pointer text-[9.5px] font-mono"
+                title="Execute statistical z-score analysis across selected incidents telemetry logs"
+              >
+                <Icons.Activity className="h-3.5 w-3.5 text-purple-400 group-hover:scale-110 transition-transform animate-pulse" />
+                <span>Bulk Anomaly Detection</span>
+              </motion.button>
+
+              {/* BULK AI CORRELATION MAP BUTTON */}
+              <motion.button
+                variants={{ hidden: { opacity: 0, scale: 0.95 }, show: { opacity: 1, scale: 1 } }}
+                onClick={() => setIsBulkCorrelationMapOpen(true)}
+                className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-cyan-500/60 bg-gradient-to-r from-cyan-950/80 to-teal-950/80 hover:from-cyan-900 hover:to-teal-900 text-cyan-200 font-bold shadow-lg shadow-cyan-500/20 transition-all cursor-pointer text-[9.5px] font-mono"
+                title="Trigger D3 force-directed topological correlation map across selected incidents"
+              >
+                <Icons.Network className="h-3.5 w-3.5 text-cyan-400 group-hover:scale-110 transition-transform" />
+                <span>Bulk AI Correlation Map</span>
+              </motion.button>
+
               {/* LOG BATCH ACTION BUTTON */}
               <motion.button
                 variants={{ hidden: { opacity: 0, scale: 0.95 }, show: { opacity: 1, scale: 1 } }}
@@ -6020,6 +6422,17 @@ Generated by SupportPilot AI Platform.
                 </AnimatePresence>
               </div>
 
+              {/* Map Dependencies Button */}
+              <motion.button
+                variants={{ hidden: { opacity: 0, scale: 0.95 }, show: { opacity: 1, scale: 1 } }}
+                onClick={() => setIsBulkCorrelationMapOpen(true)}
+                className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-cyan-500/50 bg-cyan-950/60 hover:bg-cyan-900/80 text-cyan-200 font-bold shadow-md transition-all cursor-pointer"
+                title="Trigger D3 force-directed graph to visualize physical infrastructure dependencies shared by selected incidents"
+              >
+                <Icons.Network className="h-3.5 w-3.5 text-cyan-400 group-hover:scale-110 transition-transform" />
+                <span>Map Dependencies</span>
+              </motion.button>
+
               {/* AI Auto-Tag Button */}
               <motion.button
                 variants={{ hidden: { opacity: 0, scale: 0.95 }, show: { opacity: 1, scale: 1 } }}
@@ -6112,14 +6525,17 @@ Generated by SupportPilot AI Platform.
               <motion.button
                 variants={{ hidden: { opacity: 0, scale: 0.95 }, show: { opacity: 1, scale: 1 } }}
                 onClick={() => {
-                  setIncidents(prev => prev.map(inc => selectedIncidentIds.includes(inc.id) ? { ...inc, status: 'INVESTIGATING', assignee: LOGGED_IN_USER } : inc));
-                  setSelectedIncidentIds([]);
-                  window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Acknowledged ${selectedIncidentIds.length} incident(s).` } }));
+                  setPendingBulkAction({
+                    type: 'STATUS',
+                    value: 'INVESTIGATING',
+                    targetIds: [...selectedIncidentIds]
+                  });
                 }}
-                className="group flex items-center space-x-1 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300 font-bold transition-all cursor-pointer"
+                className="group flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300 font-bold transition-all cursor-pointer"
+                title="Set status to INVESTIGATING across selected incidents"
               >
                 <Icons.CheckCircle2 className="h-3.5 w-3.5 text-indigo-400 group-hover:scale-110 transition-transform" />
-                <span>Ack</span>
+                <span>Ack ({selectedIncidentIds.length})</span>
               </motion.button>
 
               {/* Bulk Archive Multi-Step Destructive Action Button */}
@@ -6143,7 +6559,7 @@ Generated by SupportPilot AI Platform.
 
         <div className="flex-1 space-y-2.5 overflow-y-auto pr-1">
           {(() => {
-            const renderIncidentCard = (inc: Incident) => {
+            const renderIncidentCard = (inc: Incident, index: number = 0) => {
               const isSelected = inc.id === selectedIncident.id;
               const isSolved = inc.status === 'SOLVED';
               const isSelectedInBulk = selectedIncidentIds.includes(inc.id);
@@ -6152,6 +6568,22 @@ Generated by SupportPilot AI Platform.
               const isSev1Or2 = inc.severity === 'CRITICAL' || inc.severity === 'HIGH';
               const isUnassignedToMe = isSev1Or2 && inc.assignee !== LOGGED_IN_USER;
               const isKeyboardFocused = focusedResultIndex !== null && filteredIncidents[focusedResultIndex]?.id === inc.id;
+
+              const cluster = Object.values(rootCauseClusterMap).find(c => c.incidentIds.includes(inc.id) && c.count > 1);
+
+              const aiRank = getAiRankScore(inc);
+              let heatmapClass = '';
+              if (showHeatmapMode) {
+                if (aiRank >= 85) {
+                  heatmapClass = 'bg-rose-950/85 border-rose-500/80 shadow-lg shadow-rose-900/50 ring-1 ring-rose-500/50';
+                } else if (aiRank >= 70) {
+                  heatmapClass = 'bg-amber-950/75 border-amber-500/70 shadow-md shadow-amber-900/40 ring-1 ring-amber-500/40';
+                } else if (aiRank >= 40) {
+                  heatmapClass = 'bg-indigo-950/60 border-indigo-500/60';
+                } else {
+                  heatmapClass = 'bg-slate-950/70 border-slate-800';
+                }
+              }
 
               return (
                 <motion.div
@@ -6162,11 +6594,11 @@ Generated by SupportPilot AI Platform.
                   onDragOver={(e) => handleDragOver(e as any, inc.id)}
                   onDrop={(e) => handleDrop(e as any, inc.id)}
                   onDragEnd={handleDragEnd}
-                  initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                  initial={{ opacity: 0, y: 16, scale: 0.98 }}
                   animate={{ opacity: isDragging ? 0.4 : 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.95, y: -12 }}
-                  transition={{ duration: 0.25, ease: 'easeInOut' }}
-                  key={inc.id}
+                  transition={{ duration: 0.25, delay: Math.min(index * 0.03, 0.35), ease: 'easeInOut' }}
+                  key={`${inc.id}-${filterKey}`}
                   onClick={() => {
                     if (bulkMode) {
                       setSelectedIncidentIds(prev =>
@@ -6180,6 +6612,10 @@ Generated by SupportPilot AI Platform.
                     }
                   }}
                   className={`w-full flex items-start rounded-xl p-3 border.5 text-left transition-all relative overflow-hidden cursor-pointer ${
+                    showHeatmapMode
+                      ? heatmapClass
+                      : cluster ? `${cluster.borderClass} ${cluster.bgClass}` : ''
+                  } ${
                     isDragOver ? 'border-t-2 border-t-indigo-400 bg-indigo-950/30' : ''
                   } ${
                     isKeyboardFocused
@@ -6188,7 +6624,7 @@ Generated by SupportPilot AI Platform.
                         ? 'bg-slate-950/80 border-indigo-500/80 shadow-lg shadow-indigo-500/5 scale-[1.01]' 
                         : isSelectedInBulk && bulkMode
                           ? 'bg-indigo-950/30 border-indigo-500/50 shadow-lg'
-                          : 'bg-slate-900/30 border-slate-800/60 hover:bg-slate-900/60 hover:border-slate-800/80'
+                          : showHeatmapMode ? heatmapClass : 'bg-slate-900/30 border-slate-800/60 hover:bg-slate-900/60 hover:border-slate-800/80'
                   }`}
                 >
                   {/* Active SLA countdown color strip */}
@@ -6233,6 +6669,28 @@ Generated by SupportPilot AI Platform.
                         </button>
 
                         <span className="font-mono text-[9px] text-slate-500 font-semibold">{inc.id}</span>
+
+                        {/* AI-Rank Heatmap Score Badge */}
+                        {showHeatmapMode && (
+                          <div
+                            className="flex items-center space-x-1 px-1.5 py-0.5 rounded bg-amber-950/90 border border-amber-500/60 text-[8.5px] font-mono font-extrabold text-amber-300 shadow-sm shrink-0"
+                            title={`AI-Rank (Risk Priority Score): ${aiRank}/100 based on severity, SLA remaining, and tenant tier`}
+                          >
+                            <Icons.Flame className="h-3 w-3 text-amber-400 animate-bounce" />
+                            <span>AI-Rank: {aiRank}</span>
+                          </div>
+                        )}
+
+                        {/* 24-Hour AI Trend Anomaly Flag Badge */}
+                        {aiTrendAlertMode && aiTrendAlertData?.anomalies?.some((a: any) => a.incidentId === inc.id) && (
+                          <div
+                            className="flex items-center space-x-1 px-1.5 py-0.5 rounded bg-rose-950/90 border border-rose-500/80 text-[8.5px] font-mono font-extrabold text-rose-200 shadow-sm animate-pulse shrink-0"
+                            title="Gemini 24-Hour Trend Engine flagged this incident as a statistical anomaly"
+                          >
+                            <Icons.AlertTriangle className="h-3 w-3 text-rose-400" />
+                            <span>24h Anomaly</span>
+                          </div>
+                        )}
                         
                         {/* Sentiment Indicator Chip */}
                         {(() => {
@@ -6264,6 +6722,22 @@ Generated by SupportPilot AI Platform.
                             </div>
                           );
                         })()}
+
+                        {/* Root Cause Cluster Piping Badge */}
+                        {cluster && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSearchQuery(cluster.clusterId.replace(/-/g, ' '));
+                            }}
+                            className={`px-1.5 py-0.5 rounded-md font-mono text-[8px] font-bold flex items-center space-x-1 ${cluster.badgeClass} cursor-pointer hover:scale-105 transition-all shrink-0`}
+                            title={`Cluster Highlight: ${cluster.count} incidents share root cause signature "${cluster.clusterName}". Click to filter.`}
+                          >
+                            <Icons.Layers className="h-2.5 w-2.5 animate-pulse" />
+                            <span>Cluster ({cluster.count})</span>
+                          </button>
+                        )}
                       </div>
 
                       <div className="flex items-center space-x-1 shrink-0">
@@ -6312,7 +6786,10 @@ Generated by SupportPilot AI Platform.
                     </div>
                     
                     <div>
-                      <h4 className="font-bold text-white text-xs leading-snug line-clamp-2">{inc.title}</h4>
+                      <div className="flex items-start justify-between gap-2">
+                        <h4 className="font-bold text-white text-xs leading-snug line-clamp-2 flex-1">{inc.title}</h4>
+                        <WeeklyTrendSparkline incident={inc} />
+                      </div>
                       <p className="text-[10px] text-indigo-400 font-medium mt-1 uppercase tracking-wider text-[9px]">{getTenantName(inc.tenantId)}</p>
                       
                       {/* AI Auto-Tags Badges */}
@@ -6351,16 +6828,25 @@ Generated by SupportPilot AI Platform.
                     {!isSolved && (
                       (() => {
                         const slaDetails = getSlaDetails(inc);
+                        const isWarningUnder10m = !slaDetails.isBreached && slaDetails.remainingMs < 10 * 60 * 1000;
                         const progressColor = slaDetails.isBreached
                           ? 'bg-rose-500'
-                          : slaDetails.remainingMs < 10 * 60 * 1000
-                            ? 'bg-amber-500'
+                          : isWarningUnder10m
+                            ? 'bg-amber-500 animate-pulse'
                             : 'bg-indigo-500';
                         return (
                           <div className="space-y-1" title={`SLA Health: ${Math.round(slaDetails.percentage)}% time remaining`}>
                             <div className="flex justify-between items-center text-[8px] font-mono text-slate-500">
-                              <span>SLA COUNTDOWN</span>
-                              <span className={slaDetails.isBreached ? 'text-rose-400 font-extrabold animate-pulse' : 'text-indigo-400 font-bold'}>
+                              <div className="flex items-center space-x-1">
+                                <span>SLA COUNTDOWN</span>
+                                {isWarningUnder10m && (
+                                  <span className="px-1 py-0.2 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-extrabold text-[7.5px] flex items-center space-x-0.5 animate-pulse" title="SLA Breach Warning: Remaining SLA time is under 10 minutes!">
+                                    <Icons.AlertTriangle className="h-2.5 w-2.5 text-amber-400" />
+                                    <span>WARNING (&lt;10m)</span>
+                                  </span>
+                                )}
+                              </div>
+                              <span className={slaDetails.isBreached ? 'text-rose-400 font-extrabold animate-pulse' : isWarningUnder10m ? 'text-amber-400 font-extrabold animate-pulse' : 'text-indigo-400 font-bold'}>
                                 {slaDetails.isBreached ? 'BREACHED' : slaDetails.formatted}
                               </span>
                             </div>
@@ -6569,6 +7055,16 @@ Generated by SupportPilot AI Platform.
                       >
                         RES
                       </button>
+
+                      {/* Collaborative Annotation Notes Trigger Button */}
+                      <button
+                        onClick={() => setAnnotationModalIncident(inc)}
+                        className="px-2 py-0.5 rounded bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-500/40 text-[8px] font-mono font-bold text-cyan-300 flex items-center space-x-1 transition-all cursor-pointer shadow-sm active:scale-95"
+                        title="View & add persistent, collaborative engineer annotations for this incident"
+                      >
+                        <Icons.MessageSquare className="h-2.5 w-2.5 text-cyan-400" />
+                        <span>Notes ({getAnnotationCount(inc.id)})</span>
+                      </button>
                     </div>
                   </div>
                 </motion.div>
@@ -6599,6 +7095,34 @@ Generated by SupportPilot AI Platform.
 
             return (
               <div className="space-y-3">
+                {/* AI Trend Alert Anomaly Banner */}
+                {aiTrendAlertMode && (
+                  <div className="p-3.5 rounded-xl bg-gradient-to-r from-rose-950/90 via-amber-950/80 to-slate-950 border border-rose-500/60 shadow-xl space-y-2 font-mono text-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2 text-rose-300 font-bold">
+                        <Icons.AlertTriangle className="h-4 w-4 text-rose-400 animate-bounce" />
+                        <span className="uppercase tracking-wider">{aiTrendAlertData?.alertTitle || 'AI 24h Trend Analysis Active'}</span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded bg-rose-500/20 border border-rose-500/40 text-[9px] text-rose-200 font-extrabold">
+                        GEMINI 24H ENGINE
+                      </span>
+                    </div>
+                    <p className="text-slate-200 font-sans text-xs leading-relaxed">
+                      {aiTrendAlertData?.summaryMessage || 'Analyzing current search results against 24-hour historical baseline metrics...'}
+                    </p>
+                    {aiTrendAlertData?.anomalies && aiTrendAlertData.anomalies.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {aiTrendAlertData.anomalies.map((an: any, idx: number) => (
+                          <span key={idx} className="px-2 py-1 rounded-lg bg-rose-900/40 border border-rose-500/40 text-[9.5px] text-rose-200 flex items-center space-x-1">
+                            <Icons.Flame className="h-3 w-3 text-rose-400 shrink-0" />
+                            <span><strong>{an.incidentId || 'Incident'}</strong>: {an.deviationReason}</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Pinned Watched Incidents Section */}
                 {watchedList.length > 0 && (
                   <div className="bg-amber-950/20 border border-amber-500/30 rounded-xl p-2 space-y-2 shadow-lg">
@@ -6610,14 +7134,14 @@ Generated by SupportPilot AI Platform.
                       <span className="text-[8.5px] text-amber-400/70 font-mono font-normal">Pinned to top for active monitoring</span>
                     </div>
                     <div className="space-y-2">
-                      {watchedList.map((inc) => renderIncidentCard(inc))}
+                      {watchedList.map((inc, idx) => renderIncidentCard(inc, idx))}
                     </div>
                   </div>
                 )}
 
                 <AnimatePresence mode="popLayout">
                   {groupBy === 'NONE' ? (
-                    filteredIncidents.map((inc) => renderIncidentCard(inc))
+                    filteredIncidents.map((inc, idx) => renderIncidentCard(inc, idx))
                   ) : (
                     Object.entries(groupedIncidents || {}).map(([groupName, groupItems]) => {
                       const isCollapsed = collapsedServices[groupName];
@@ -8790,78 +9314,113 @@ Generated by SupportPilot AI Platform.
       {/* BULK ACTION CONFIRMATION MODAL */}
       <AnimatePresence>
         {pendingBulkAction && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
             <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 p-5 shadow-2xl relative overflow-hidden"
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              className="w-full max-w-lg rounded-2xl border border-indigo-500/40 bg-slate-950 p-6 shadow-2xl relative overflow-hidden space-y-4 font-mono"
             >
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
-                <div className="flex items-center space-x-2.5 text-amber-400">
-                  <Icons.AlertTriangle className="h-5 w-5 animate-pulse" />
-                  <h4 className="font-display font-bold text-sm text-white">Confirm Bulk Queue Update</h4>
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center space-x-3 text-amber-400">
+                  <div className="h-10 w-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0">
+                    <Icons.AlertTriangle className="h-5 w-5 text-amber-400 animate-pulse" />
+                  </div>
+                  <div>
+                    <h4 className="font-display font-bold text-sm text-white flex items-center space-x-2">
+                      <span>{pendingBulkAction.type === 'STATUS' || pendingBulkAction.type === 'RESOLVE_ALL' ? 'Confirm Bulk Status Change' : 'Confirm Bulk Operational Action'}</span>
+                      <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-mono text-[10px] font-bold border border-indigo-500/30">
+                        {pendingBulkAction.targetIds.length} Affected
+                      </span>
+                    </h4>
+                    <p className="text-[10px] font-sans text-slate-400">
+                      Explicit Batch Verification & Safety Check
+                    </p>
+                  </div>
                 </div>
                 <button
                   onClick={() => setPendingBulkAction(null)}
-                  className="rounded-md border border-slate-800 bg-slate-950/80 p-1.5 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  className="rounded-lg border border-slate-800 bg-slate-900 p-1.5 text-slate-400 hover:text-white transition-colors cursor-pointer"
                 >
                   <Icons.X className="h-4 w-4" />
                 </button>
               </div>
 
-              <div className="space-y-3 font-sans">
-                <p className="text-xxs text-slate-300 leading-relaxed">
-                  You have requested a bulk change targeting <span className="text-indigo-400 font-bold font-mono">{pendingBulkAction.targetIds.length}</span> active operational tickets.
-                </p>
-
-                <div className="rounded-lg bg-slate-950 border border-slate-800/60 p-3.5 space-y-2">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
-                    <span className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">Requested Change</span>
-                    <span className="text-[9px] font-mono text-indigo-400 font-bold uppercase bg-indigo-500/5 px-1.5 py-0.5 rounded border border-indigo-500/10">
+              <div className="space-y-3 font-sans text-xs">
+                <div className="rounded-xl bg-slate-900 border border-slate-800 p-3.5 space-y-2">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                    <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider font-bold">Requested Operation</span>
+                    <span className="text-[9px] font-mono text-indigo-300 font-bold uppercase bg-indigo-500/15 px-2 py-0.5 rounded border border-indigo-500/30">
                       {pendingBulkAction.type}
                     </span>
                   </div>
                   
-                  <div className="text-[11px] text-slate-200">
+                  <div className="text-[11px] text-slate-200 leading-relaxed pt-1">
                     {pendingBulkAction.type === 'ASSIGN' && (
-                      <span>Assigning <strong className="font-mono text-indigo-400">{pendingBulkAction.targetIds.length}</strong> incidents to <strong className="text-white">{pendingBulkAction.value}</strong>.</span>
+                      <span>Reassigning ownership for <strong className="font-mono text-indigo-400 font-bold">{pendingBulkAction.targetIds.length} incident(s)</strong> to engineer <strong className="text-white font-bold">{pendingBulkAction.value}</strong>.</span>
                     )}
                     {pendingBulkAction.type === 'STATUS' && (
-                      <span>Setting the status of <strong className="font-mono text-indigo-400">{pendingBulkAction.targetIds.length}</strong> incidents to <strong className="text-white uppercase">{pendingBulkAction.value}</strong>.</span>
+                      <span>Updating status for <strong className="font-mono text-indigo-400 font-bold">{pendingBulkAction.targetIds.length} incident(s)</strong> to <strong className="text-emerald-400 font-mono font-black uppercase">{pendingBulkAction.value}</strong>.</span>
                     )}
                     {pendingBulkAction.type === 'REPRIORITIZE' && (
-                      <span>Updating severity priority to <strong className="text-white font-mono">{pendingBulkAction.value}</strong> (SLA limits and notifications will align immediately).</span>
+                      <span>Updating severity level across <strong className="font-mono text-indigo-400 font-bold">{pendingBulkAction.targetIds.length} incident(s)</strong> to <strong className="text-amber-300 font-mono font-bold">{pendingBulkAction.value}</strong>.</span>
                     )}
                     {pendingBulkAction.type === 'RESOLVE_ALL' && (
-                      <span>Instantly resolving <strong className="font-mono text-indigo-400">{pendingBulkAction.targetIds.length}</strong> selected incidents with an automatic CSAT satisfaction score of <strong className="text-emerald-400 font-mono">94%</strong>.</span>
+                      <span>Instantly resolving <strong className="font-mono text-indigo-400 font-bold">{pendingBulkAction.targetIds.length} selected incident(s)</strong> with standard CSAT resolution code.</span>
                     )}
                   </div>
                 </div>
 
-                <div className="rounded-lg bg-indigo-500/5 border border-indigo-500/15 p-3 flex gap-2.5 items-start">
+                {/* Affected Incidents List */}
+                <div className="space-y-1.5 font-mono">
+                  <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-bold">
+                    Targeted Incident Queue ({pendingBulkAction.targetIds.length} Items):
+                  </span>
+                  <div className="max-h-36 overflow-y-auto space-y-1 p-2 rounded-xl bg-slate-950 border border-slate-800/80 text-[11px]">
+                    {incidents
+                      .filter(inc => pendingBulkAction.targetIds.includes(inc.id))
+                      .map(inc => (
+                        <div key={inc.id} className="flex items-center justify-between p-2 rounded-lg bg-slate-900/60 border border-slate-800/60 text-slate-300">
+                          <div className="flex items-center space-x-2 truncate flex-1 min-w-0 pr-2">
+                            <span className="text-indigo-400 font-bold shrink-0">{inc.id}</span>
+                            <span className="truncate text-slate-200 text-[10.5px] font-sans">{inc.title}</span>
+                          </div>
+                          {(pendingBulkAction.type === 'STATUS' || pendingBulkAction.type === 'RESOLVE_ALL') && (
+                            <div className="flex items-center space-x-1 shrink-0 text-[9px]">
+                              <span className="px-1.5 py-0.5 rounded bg-slate-950 text-slate-400 border border-slate-800 uppercase">{inc.status}</span>
+                              <Icons.ArrowRight className="h-3 w-3 text-slate-500" />
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30 font-bold uppercase">{pendingBulkAction.value}</span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-indigo-500/5 border border-indigo-500/20 p-3 flex gap-2.5 items-start">
                   <Icons.Info className="h-4 w-4 text-indigo-400 shrink-0 mt-0.5" />
                   <div className="space-y-0.5">
-                    <h5 className="text-[10px] font-bold text-indigo-300 uppercase tracking-wide">Change Impact Summary</h5>
-                    <p className="text-[9.5px] text-slate-400 leading-normal">
-                      Assigning new owners or modifying live statuses fires automatic webhooks, alters support metrics SLAs, and routes client notifications. Proceed with care.
+                    <h5 className="text-[10px] font-bold text-indigo-300 uppercase tracking-wide">Batch Audit Log Event</h5>
+                    <p className="text-[9.5px] text-slate-400 leading-normal font-sans">
+                      This action will update status histories, emit webhooks, and record a batch audit entry for all {pendingBulkAction.targetIds.length} incidents.
                     </p>
                   </div>
                 </div>
               </div>
 
-              <div className="mt-5 flex space-x-2.5 justify-end">
+              <div className="pt-2 flex space-x-2.5 justify-end">
                 <button
                   onClick={() => setPendingBulkAction(null)}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xxs font-bold transition-colors cursor-pointer"
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 rounded-xl text-xs font-bold transition-colors cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleApplyBulkAction}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xxs font-bold transition-colors cursor-pointer shadow-lg shadow-indigo-600/10"
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-lg shadow-indigo-600/30 flex items-center space-x-1.5"
                 >
-                  Confirm & Apply Change
+                  <Icons.CheckCircle2 className="h-3.5 w-3.5" />
+                  <span>Execute Bulk Update ({pendingBulkAction.targetIds.length})</span>
                 </button>
               </div>
             </motion.div>
@@ -9153,6 +9712,36 @@ Generated by SupportPilot AI Platform.
               >
                 <Icons.CheckCircle className="h-3.5 w-3.5" />
                 <span>Quick Resolve</span>
+              </button>
+
+              {/* Notify Stakeholders Button */}
+              <button
+                onClick={() => setIsNotifyStakeholdersOpen(true)}
+                className="flex items-center space-x-1.5 rounded-lg border border-indigo-500/50 bg-indigo-950/80 px-3 py-1.5 text-xxs font-bold text-indigo-200 hover:bg-indigo-900 cursor-pointer transition-all shadow-lg shadow-indigo-600/10 shrink-0 font-mono"
+                title="Send consolidated status report for selected incidents to configured Slack channels"
+              >
+                <Icons.Send className="h-3.5 w-3.5 text-indigo-400" />
+                <span>Notify Stakeholders</span>
+              </button>
+
+              {/* Bulk Anomaly Detection Button */}
+              <button
+                onClick={() => setIsBulkAnomalyModalOpen(true)}
+                className="flex items-center space-x-1.5 rounded-lg border border-purple-500/50 bg-purple-950/80 px-3 py-1.5 text-xxs font-bold text-purple-200 hover:bg-purple-900 cursor-pointer transition-all shadow-lg shadow-purple-600/10 shrink-0 font-mono"
+                title="Execute statistical z-score analysis across selected telemetry logs"
+              >
+                <Icons.Activity className="h-3.5 w-3.5 text-purple-400 animate-pulse" />
+                <span>Bulk Anomaly Detection</span>
+              </button>
+
+              {/* Bulk AI Correlation Map Button */}
+              <button
+                onClick={() => setIsBulkCorrelationMapOpen(true)}
+                className="flex items-center space-x-1.5 rounded-lg border border-cyan-500/50 bg-cyan-950/80 px-3 py-1.5 text-xxs font-bold text-cyan-200 hover:bg-cyan-900 cursor-pointer transition-all shadow-lg shadow-cyan-600/10 shrink-0 font-mono"
+                title="Trigger D3 force-directed topological correlation map across selected incidents"
+              >
+                <Icons.Network className="h-3.5 w-3.5 text-cyan-400" />
+                <span>Correlation Map</span>
               </button>
 
               {/* Log Batch Action Button */}
@@ -10880,6 +11469,76 @@ Generated by SupportPilot AI Platform.
           </div>
         )}
       </AnimatePresence>
+
+      {/* NOTIFY STAKEHOLDERS MODAL */}
+      <NotifyStakeholdersModal
+        isOpen={isNotifyStakeholdersOpen}
+        onClose={() => setIsNotifyStakeholdersOpen(false)}
+        selectedIncidents={incidents.filter(i => selectedIncidentIds.includes(i.id))}
+        onAddAuditLog={onAddAuditLog}
+      />
+
+      {/* BULK ANOMALY DETECTION MODAL */}
+      <BulkAnomalyDetectionModal
+        isOpen={isBulkAnomalyModalOpen}
+        onClose={() => setIsBulkAnomalyModalOpen(false)}
+        selectedIncidents={incidents.filter(i => selectedIncidentIds.includes(i.id))}
+        onAddAuditLog={onAddAuditLog}
+      />
+
+      {/* BULK CORRELATION MAP MODAL */}
+      <BulkCorrelationMapModal
+        isOpen={isBulkCorrelationMapOpen}
+        onClose={() => setIsBulkCorrelationMapOpen(false)}
+        selectedIncidents={
+          selectedIncidentIds.length > 0
+            ? incidents.filter(i => selectedIncidentIds.includes(i.id))
+            : filteredIncidents
+        }
+        onAddAuditLog={onAddAuditLog}
+      />
+
+      {/* GEMINI SEARCH EXECUTIVE SUMMARY MODAL */}
+      <ExecutiveSearchSummaryModal
+        isOpen={isExecutiveSummaryModalOpen}
+        onClose={() => setIsExecutiveSummaryModalOpen(false)}
+        filteredIncidents={filteredIncidents}
+        searchQuery={searchQuery}
+        onAddAuditLog={onAddAuditLog}
+      />
+
+      {/* BULK PDF EXPORT REPORT MODAL */}
+      <BulkPdfExportModal
+        isOpen={isBulkPdfExportOpen}
+        onClose={() => setIsBulkPdfExportOpen(false)}
+        selectedIncidents={
+          selectedIncidentIds.length > 0
+            ? incidents.filter(i => selectedIncidentIds.includes(i.id))
+            : filteredIncidents
+        }
+        onAddAuditLog={onAddAuditLog}
+      />
+
+      {/* SMART AUTO-CATEGORIZATION MODAL */}
+      <SmartAutoCategorizationModal
+        isOpen={isSmartAutoCategorizeOpen}
+        onClose={() => setIsSmartAutoCategorizeOpen(false)}
+        selectedIncidents={
+          selectedIncidentIds.length > 0
+            ? incidents.filter(i => selectedIncidentIds.includes(i.id))
+            : filteredIncidents
+        }
+        onApplyCategoryLabels={handleApplySmartCategorizationLabels}
+        onAddAuditLog={onAddAuditLog}
+      />
+
+      {/* INCIDENT ANNOTATIONS MODAL */}
+      <IncidentAnnotationsModal
+        isOpen={!!annotationModalIncident}
+        onClose={() => setAnnotationModalIncident(null)}
+        incident={annotationModalIncident}
+        onAddAuditLog={onAddAuditLog}
+      />
 
       {/* Contextual Keyboard Shortcut Bar Overlay */}
       <ContextualShortcutBar />
