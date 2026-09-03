@@ -54,7 +54,7 @@ export function NotifyStakeholdersModal({
 
     return `🚨 *INCIDENT CONSOLIDATED REPORT (${totalCount} TICKETS)*
 *Urgency Level:* :fire: ${urgencyLevel} | *Dispatched To:* \`${channelNames || '#incidents-critical'}\`
-*Dispatched By:* Eshan Barua (CTO) | *Timestamp:* ${new Date().toLocaleTimeString()}
+*Dispatched By:* Alex Vance (Admin) | *Timestamp:* ${new Date().toLocaleTimeString()}
 
 ${customNote ? `> 📝 *Executive Note:* ${customNote}\n\n` : ''}*Summary Breakdown:*
 - *Critical (P0):* ${criticalCount}
@@ -90,7 +90,7 @@ ${selectedIncidents.length > 5 ? `_...and ${selectedIncidents.length - 5} more s
 
       if (onAddAuditLog) {
         onAddAuditLog(
-          'Eshan Barua (CTO)',
+          'Alex Vance (Admin)',
           'Slack Stakeholder Notification Dispatched',
           'Integrated Notification Gateway',
           'SUCCESS',

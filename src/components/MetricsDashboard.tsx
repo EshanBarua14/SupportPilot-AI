@@ -702,7 +702,7 @@ export default function MetricsDashboard() {
     doc.setFont("Helvetica", "bold");
     doc.text("Chief Auditor:", 20, 67);
     doc.setFont("Helvetica", "normal");
-    doc.text("Eshan Barua (CTO)", 46, 67);
+    doc.text("Alex Vance (Admin)", 46, 67);
 
     doc.setFont("Helvetica", "bold");
     doc.text("Prod Cluster:", 110, 67);

@@ -18,7 +18,7 @@ export default function AspNetConsole() {
   const [loadingFile, setLoadingFile] = useState<boolean>(false);
 
   // Authentication & Token claims states
-  const [loginEmail, setLoginEmail] = useState<string>('eshanbaruabarua@gmail.com');
+  const [loginEmail, setLoginEmail] = useState<string>('admin@supportpilot.ai');
   const [selectedTenant, setSelectedTenant] = useState<string>('11111111-1111-1111-1111-111111111111');
   const [jwtToken, setJwtToken] = useState<string>('');
   const [decodedClaims, setDecodedClaims] = useState<any>(null);
@@ -532,14 +532,14 @@ export default function AspNetConsole() {
                       value={loginEmail}
                       onChange={(e) => setLoginEmail(e.target.value)}
                       className="w-full rounded-xl border border-slate-800 bg-slate-950 p-3 text-slate-200 outline-none focus:border-indigo-500 font-mono transition-colors"
-                      placeholder="eshan@supportpilot.ai"
+                      placeholder="admin@supportpilot.ai"
                     />
                     <div className="flex flex-wrap gap-1.5 mt-2">
                       <button
-                        onClick={() => setLoginEmail('eshanbaruabarua@gmail.com')}
+                        onClick={() => setLoginEmail('admin@supportpilot.ai')}
                         className="px-2 py-1 rounded bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 font-mono text-[9px]"
                       >
-                        cto_role
+                        admin_role
                       </button>
                       <button
                         onClick={() => setLoginEmail('ajenkins.l1@acme.com')}

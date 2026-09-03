@@ -188,7 +188,7 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
 
       doc.setTextColor(203, 213, 225);
       doc.setFontSize(8);
-      doc.text(`Generated: ${dateStr} | Chief Auditor: Eshan Barua (CTO)`, 14, 32);
+      doc.text(`Generated: ${dateStr} | Chief Auditor: Alex Vance (Admin)`, 14, 32);
 
       // Section 1: Executive Overview & Statistics
       doc.setTextColor(99, 102, 241);

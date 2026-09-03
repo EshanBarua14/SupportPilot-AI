@@ -44,7 +44,7 @@ const INITIAL_NOTES_BY_INCIDENT: Record<string, StickyNote[]> = {
     },
     {
       id: 'sn-3',
-      author: 'Eshan Barua',
+      author: 'Alex Vance',
       role: 'L3 Ops Lead',
       avatarColor: 'bg-amber-500',
       noteColor: 'emerald',
@@ -58,7 +58,7 @@ const INITIAL_NOTES_BY_INCIDENT: Record<string, StickyNote[]> = {
 
 export const IncidentStickyNotes: React.FC<IncidentStickyNotesProps> = ({
   incidentId,
-  currentOperator = 'Eshan Barua'
+  currentOperator = 'Alex Vance'
 }) => {
   const [notes, setNotes] = useState<StickyNote[]>(() => {
     return INITIAL_NOTES_BY_INCIDENT[incidentId] || INITIAL_NOTES_BY_INCIDENT['default'];

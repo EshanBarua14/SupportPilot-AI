@@ -106,7 +106,7 @@ export default function SettingsConsole({
     setNewPhrase('');
     setToastMessage(`Registered custom voice trigger: "${rule.phrase}"`);
     playUiSound('ding');
-    handleAddAuditLog("Eshan Barua (CTO)", "Voice Command Mapped", "Voice Engine", "SUCCESS", `Mapped natural phrase "${rule.phrase}" to ${rule.actionType} (${rule.parameter})`);
+    handleAddAuditLog("Alex Vance (Admin)", "Voice Command Mapped", "Voice Engine", "SUCCESS", `Mapped natural phrase "${rule.phrase}" to ${rule.actionType} (${rule.parameter})`);
   };
 
   const handleToggleRule = (id: string) => {
@@ -144,7 +144,7 @@ export default function SettingsConsole({
       }
 
       setToastMessage(`Voice Trigger Executed: "${matched.phrase}"`);
-      handleAddAuditLog("Eshan Barua (CTO)", "Voice Trigger Test", "Voice Engine", "SUCCESS", `Executed voice command "${query}" -> ${matched.actionType}`);
+      handleAddAuditLog("Alex Vance (Admin)", "Voice Trigger Test", "Voice Engine", "SUCCESS", `Executed voice command "${query}" -> ${matched.actionType}`);
     } else {
       setTestResult({
         matched: false,
@@ -201,7 +201,7 @@ export default function SettingsConsole({
     setUiDensity(preset.uiDensity);
     setToastMessage(`Applied Layout Preset: "${preset.name}"`);
     playUiSound('assign');
-    handleAddAuditLog("Eshan Barua (CTO)", "Layout Preset Applied", "UI Manager", "SUCCESS", `Applied UI layout configuration "${preset.name}" (Density: ${preset.uiDensity}, Pinned: ${preset.isPinned})`);
+    handleAddAuditLog("Alex Vance (Admin)", "Layout Preset Applied", "UI Manager", "SUCCESS", `Applied UI layout configuration "${preset.name}" (Density: ${preset.uiDensity}, Pinned: ${preset.isPinned})`);
   };
 
   const handleSaveCurrentAsPreset = (e: React.FormEvent) => {

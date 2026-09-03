@@ -547,7 +547,7 @@ function IncidentLifecycleTimeline({ incident }: { incident: Incident }) {
       icon: Icons.Search,
       color: 'amber',
       title: 'AI Root Cause Agent & L3 Engineer Dispatched',
-      description: `Assigned to ${incident.assignee || 'Eshan Barua'}. Deep log correlation engine dispatched Jaeger distributed traces and db lock analysis.`,
+      description: `Assigned to ${incident.assignee || 'Alex Vance'}. Deep log correlation engine dispatched Jaeger distributed traces and db lock analysis.`,
       logEvidence: (incident.logs && incident.logs.length > 1) ? incident.logs[1].message : 'Distributed Jaeger trace correlation initiated'
     },
     {
@@ -892,7 +892,7 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
   const logContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Operator user context
-  const LOGGED_IN_USER = "Eshan Barua (CTO)";
+  const LOGGED_IN_USER = "Alex Vance (Admin)";
 
   // Resolution Codes for Quick Resolution Wizard
   const RESOLUTION_CODES = [
@@ -1054,7 +1054,7 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
 
     if (onAddAuditLog) {
       onAddAuditLog(
-        LOGGED_IN_USER || 'Eshan Barua (CTO)',
+        LOGGED_IN_USER || 'Alex Vance (Admin)',
         'Quick Filter Preset Created',
         'FilterPresetManager',
         'SUCCESS',
@@ -2294,13 +2294,13 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
           return {
             ...inc,
             status: logBatchTargetValue as IncidentStatus,
-            lastModifiedBy: "Eshan Barua (CTO)",
+            lastModifiedBy: "Alex Vance (Admin)",
             statusHistory: [
               ...getStatusHistory(inc),
               {
                 status: logBatchTargetValue as IncidentStatus,
                 timestamp: new Date().toISOString(),
-                changedBy: "Eshan Barua (Compliance Audit)",
+                changedBy: "Alex Vance (Compliance Audit)",
                 message: `[Compliance Audit Batch Action] Reason: ${reasonText}`
               }
             ]
@@ -2309,13 +2309,13 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
           return {
             ...inc,
             assignee: logBatchTargetValue,
-            lastModifiedBy: "Eshan Barua (CTO)",
+            lastModifiedBy: "Alex Vance (Admin)",
             statusHistory: [
               ...getStatusHistory(inc),
               {
                 status: inc.status,
                 timestamp: new Date().toISOString(),
-                changedBy: "Eshan Barua (Compliance Audit)",
+                changedBy: "Alex Vance (Compliance Audit)",
                 message: `[Compliance Audit Reassignment to ${logBatchTargetValue}] Reason: ${reasonText}`
               }
             ]
@@ -2324,13 +2324,13 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
           return {
             ...inc,
             severity: logBatchTargetValue as SeverityType,
-            lastModifiedBy: "Eshan Barua (CTO)",
+            lastModifiedBy: "Alex Vance (Admin)",
             statusHistory: [
               ...getStatusHistory(inc),
               {
                 status: inc.status,
                 timestamp: new Date().toISOString(),
-                changedBy: "Eshan Barua (Compliance Audit)",
+                changedBy: "Alex Vance (Compliance Audit)",
                 message: `[Compliance Audit Priority Shift to ${logBatchTargetValue}] Reason: ${reasonText}`
               }
             ]
@@ -2339,13 +2339,13 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
           return {
             ...inc,
             slaDeadline: new Date(Date.now() + 4 * 3600 * 1000).toISOString(),
-            lastModifiedBy: "Eshan Barua (CTO)",
+            lastModifiedBy: "Alex Vance (Admin)",
             statusHistory: [
               ...getStatusHistory(inc),
               {
                 status: inc.status,
                 timestamp: new Date().toISOString(),
-                changedBy: "Eshan Barua (Compliance Audit)",
+                changedBy: "Alex Vance (Compliance Audit)",
                 message: `[Compliance Audit SLA Reset] Reason: ${reasonText}`
               }
             ]
@@ -2356,7 +2356,7 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
     }));
 
     onAddAuditLog(
-      "Eshan Barua (CTO)",
+      "Alex Vance (Admin)",
       `Logged Batch Action: ${logBatchActionType}`,
       "Compliance Audit Engine",
       "SUCCESS",
@@ -2692,13 +2692,13 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
           ...inc,
           status: prevStatus,
           assignee: prevAssignee,
-          lastModifiedBy: "Eshan Barua (Reverted)",
+          lastModifiedBy: "Alex Vance (Reverted)",
           statusHistory: [
             ...getStatusHistory(inc),
             {
               status: prevStatus,
               timestamp: new Date().toISOString(),
-              changedBy: "Eshan Barua (Bulk Revert)",
+              changedBy: "Alex Vance (Bulk Revert)",
               message: `Reverted bulk change operation (${description}).`
             }
           ]
@@ -2786,13 +2786,13 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
           ...inc,
           createdAt: new Date().toISOString(),
           slaRemainingSecs: resetMins * 60,
-          lastModifiedBy: "Eshan Barua (SLA Reset)",
+          lastModifiedBy: "Alex Vance (SLA Reset)",
           statusHistory: [
             ...getStatusHistory(inc),
             {
               status: inc.status,
               timestamp: new Date().toISOString(),
-              changedBy: "Eshan Barua (CTO)",
+              changedBy: "Alex Vance (Admin)",
               message: `SLA Timer manually reset to full duration (${resetMins}m).`
             }
           ]
@@ -2802,7 +2802,7 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
     }));
 
     onAddAuditLog(
-      "Eshan Barua (CTO)",
+      "Alex Vance (Admin)",
       "Reset SLA Countdown Timer",
       "Bulk Operations Toolbar",
       "SUCCESS",
@@ -2871,7 +2871,7 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
     document.body.removeChild(link);
 
     onAddAuditLog(
-      "Eshan Barua (CTO)",
+      "Alex Vance (Admin)",
       "Export Selection CSV Report",
       "Bulk Operations Toolbar",
       "SUCCESS",
@@ -3303,7 +3303,7 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
     document.body.removeChild(link);
 
     onAddAuditLog(
-      "Eshan Barua (CTO)",
+      "Alex Vance (Admin)",
       "Export CSV Report",
       "Operational Workspace",
       "SUCCESS",
@@ -3481,7 +3481,7 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
     doc.save(`SupportPilot_Workspace_Report_${new Date().toISOString().slice(0,10)}.pdf`);
 
     onAddAuditLog(
-      "Eshan Barua (CTO)",
+      "Alex Vance (Admin)",
       "Export PDF Report",
       "Operational Workspace",
       "SUCCESS",
@@ -3625,13 +3625,13 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
             return { 
               ...inc, 
               assignee: value, 
-              lastModifiedBy: "Eshan Barua (CTO)",
+              lastModifiedBy: "Alex Vance (Admin)",
               statusHistory: [
                 ...getStatusHistory(inc),
                 {
                   status: inc.status,
                   timestamp: new Date().toISOString(),
-                  changedBy: "Eshan Barua (Bulk Action)",
+                  changedBy: "Alex Vance (Bulk Action)",
                   message: `Reassigned ticket owner to ${value}.`
                 }
               ]
@@ -3640,13 +3640,13 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
             return { 
               ...inc, 
               status: value as any, 
-              lastModifiedBy: "Eshan Barua (CTO)",
+              lastModifiedBy: "Alex Vance (Admin)",
               statusHistory: [
                 ...getStatusHistory(inc),
                 {
                   status: value as any,
                   timestamp: new Date().toISOString(),
-                  changedBy: "Eshan Barua (Bulk Action)",
+                  changedBy: "Alex Vance (Bulk Action)",
                   message: `Transitioned status to ${value} via bulk operations.`
                 }
               ]
@@ -3655,13 +3655,13 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
             return { 
               ...inc, 
               severity: value as any, 
-              lastModifiedBy: "Eshan Barua (CTO)",
+              lastModifiedBy: "Alex Vance (Admin)",
               statusHistory: [
                 ...getStatusHistory(inc),
                 {
                   status: inc.status,
                   timestamp: new Date().toISOString(),
-                  changedBy: "Eshan Barua (Bulk Action)",
+                  changedBy: "Alex Vance (Bulk Action)",
                   message: `Reprioritized severity level to ${value}.`
                 }
               ]
@@ -3671,13 +3671,13 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
               ...inc, 
               status: 'SOLVED', 
               csatScore: 94, 
-              lastModifiedBy: "Eshan Barua (CTO)",
+              lastModifiedBy: "Alex Vance (Admin)",
               statusHistory: [
                 ...getStatusHistory(inc),
                 {
                   status: 'SOLVED',
                   timestamp: new Date().toISOString(),
-                  changedBy: "Eshan Barua (Bulk Action)",
+                  changedBy: "Alex Vance (Bulk Action)",
                   message: "Resolved incident via bulk resolution."
                 }
               ]
@@ -3716,7 +3716,7 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
     }
 
     onAddAuditLog(
-      "Eshan Barua (CTO)",
+      "Alex Vance (Admin)",
       logAction,
       "Operational Workspace",
       "SUCCESS",
@@ -3787,7 +3787,7 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
           title: "Engineer Note Appended",
           description: noteText,
           type: "USER_NOTE",
-          agent: "Eshan Barua (CTO)"
+          agent: "Alex Vance (Admin)"
         };
         
         if (updatedAnalysis.timeline) {
@@ -3800,7 +3800,7 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
           ...inc,
           description: newDescription,
           analysis: updatedAnalysis,
-          lastModifiedBy: "Eshan Barua (CTO)"
+          lastModifiedBy: "Alex Vance (Admin)"
         };
       }
       return inc;
@@ -3908,7 +3908,7 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
   };
 
   const ENGINEERS = [
-    "Eshan Barua",
+    "Alex Vance",
     "Elena Rostova",
     "Marcus Vance",
     "Priya Patel",
@@ -3926,7 +3926,7 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
           title: "Incident Assigned",
           description: `Ticket assigned to ${engineerName} for diagnostic deep-dive.`,
           type: "ACTION",
-          agent: "Eshan Barua (CTO)"
+          agent: "Alex Vance (Admin)"
         };
         if (updatedAnalysis.timeline) {
           updatedAnalysis.timeline = [newTimelineEvent, ...updatedAnalysis.timeline];
@@ -3936,7 +3936,7 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
         return {
           ...inc,
           assignee: engineerName,
-          lastModifiedBy: "Eshan Barua (CTO)",
+          lastModifiedBy: "Alex Vance (Admin)",
           analysis: updatedAnalysis
         };
       }
@@ -3944,7 +3944,7 @@ export default function IncidentWorkspace({ modelSelection, onAddAuditLog }: Inc
     }));
 
     onAddAuditLog(
-      "Eshan Barua (CTO)", 
+      "Alex Vance (Admin)", 
       `Assign ticket to ${engineerName}`, 
       "Operational Workspace", 
       "SUCCESS", 
@@ -4128,7 +4128,7 @@ Generated by SupportPilot AI Platform.
         title: "NEW TICKET: [Pending Specification]",
         severity: "MEDIUM",
         status: "OPEN",
-        assignee: "Eshan Barua",
+        assignee: "Alex Vance",
         createdAt: new Date().toISOString(),
         appName: "System Service",
         description: "Specify incident telemetry parameters and investigate immediately.",
@@ -4138,7 +4138,7 @@ Generated by SupportPilot AI Platform.
         customerName: "Support Operator",
         customerProfile: "System created manual incident card for deep investigation.",
         logs: [
-          { timestamp: new Date().toISOString(), level: 'INFO', source: 'System', message: 'Manual ticket instantiated by Eshan Barua.' }
+          { timestamp: new Date().toISOString(), level: 'INFO', source: 'System', message: 'Manual ticket instantiated by Alex Vance.' }
         ],
         metrics: [],
         traces: [],
@@ -4150,7 +4150,7 @@ Generated by SupportPilot AI Platform.
       setIncidents(prev => [newTicket, ...prev]);
       setSelectedIncident(newTicket);
       onAddAuditLog(
-        "Eshan Barua (CTO)", 
+        "Alex Vance (Admin)", 
         "Create Incident", 
         "Operational Workspace", 
         "SUCCESS", 
@@ -4175,7 +4175,7 @@ Generated by SupportPilot AI Platform.
 
       if (cmdName) {
         onAddAuditLog(
-          LOGGED_IN_USER || 'Eshan Barua (CTO)',
+          LOGGED_IN_USER || 'Alex Vance (Admin)',
           `Voice Command Executed: ${cmdName}`,
           'VoiceProcessor',
           'SUCCESS',
@@ -4188,7 +4188,7 @@ Generated by SupportPilot AI Platform.
       const sev = e.detail?.severity;
       if (sev) {
         onAddAuditLog(
-          LOGGED_IN_USER || 'Eshan Barua (CTO)',
+          LOGGED_IN_USER || 'Alex Vance (Admin)',
           'Voice Filter Severity Applied',
           'VoiceProcessor',
           'SUCCESS',
@@ -4201,7 +4201,7 @@ Generated by SupportPilot AI Platform.
       const st = e.detail?.status;
       if (st) {
         onAddAuditLog(
-          LOGGED_IN_USER || 'Eshan Barua (CTO)',
+          LOGGED_IN_USER || 'Alex Vance (Admin)',
           'Voice Incident Status Updated',
           'VoiceProcessor',
           'SUCCESS',
@@ -4631,7 +4631,7 @@ Generated by SupportPilot AI Platform.
   };
 
   const handleConfirmActionApproval = () => {
-    // Check signature or CTO authority (since we are logged in as Eshan Barua, we permit bypass)
+    // Check signature or Admin authority (since we are logged in as Alex Vance, we permit bypass)
     if (!approvalSignature.trim() && selectedIncident.severity === 'CRITICAL') {
       alert("A physical engineering signature is required for production modifications.");
       return;
@@ -4692,7 +4692,7 @@ Generated by SupportPilot AI Platform.
     }, 2500);
 
     onAddAuditLog(
-      "Eshan Barua (CTO)",
+      "Alex Vance (Admin)",
       "Remediation Dispatched",
       "Automation Engine",
       "SUCCESS",
@@ -4738,14 +4738,14 @@ Generated by SupportPilot AI Platform.
           ...inc,
           status: 'SOLVED',
           csatScore: 95,
-          lastModifiedBy: "Eshan Barua (CTO)"
+          lastModifiedBy: "Alex Vance (Admin)"
         };
       }
       return inc;
     }));
     
     onAddAuditLog(
-      "Eshan Barua (CTO)",
+      "Alex Vance (Admin)",
       "Customer Resolution Dispatched",
       "Support Center",
       "SUCCESS",
@@ -5079,7 +5079,7 @@ Generated by SupportPilot AI Platform.
     doc.save(`SupportPilot_PostMortem_Report_${selectedIncident.id}.pdf`);
 
     onAddAuditLog(
-      "Eshan Barua (CTO)",
+      "Alex Vance (Admin)",
       "Document Generated",
       "Compliance Engine",
       "SUCCESS",
@@ -5146,7 +5146,7 @@ Generated by SupportPilot AI Platform.
     md += `- **Health Status:** Degradation tracked via SupportPilot Cognitive Shield\n\n`;
 
     md += `---\n`;
-    md += `*Compiled automatically by SupportPilot Cognitive Compliance Suite on ${new Date().toLocaleString()} by Eshan Barua (CTO)*\n`;
+    md += `*Compiled automatically by SupportPilot Cognitive Compliance Suite on ${new Date().toLocaleString()} by Alex Vance (Admin)*\n`;
 
     // Create a Blob and trigger local download
     const blob = new Blob([md], { type: 'text/markdown;charset=utf-8;' });
@@ -5159,7 +5159,7 @@ Generated by SupportPilot AI Platform.
     document.body.removeChild(link);
 
     onAddAuditLog(
-      "Eshan Barua (CTO)",
+      "Alex Vance (Admin)",
       "Document Generated",
       "Compliance Engine",
       "SUCCESS",
@@ -6974,13 +6974,13 @@ Generated by SupportPilot AI Platform.
                               return { 
                                 ...i, 
                                 status: 'INVESTIGATING', 
-                                lastModifiedBy: "Eshan Barua (Quick)",
+                                lastModifiedBy: "Alex Vance (Quick)",
                                 statusHistory: [
                                   ...getStatusHistory(i),
                                   {
                                     status: 'INVESTIGATING',
                                     timestamp: new Date().toISOString(),
-                                    changedBy: "Eshan Barua (CTO)",
+                                    changedBy: "Alex Vance (Admin)",
                                     message: "Incident status acknowledged & transitioned to investigating via list quick toolbar."
                                   }
                                 ]
@@ -7013,13 +7013,13 @@ Generated by SupportPilot AI Platform.
                                 ...i, 
                                 status: 'ESCALATED', 
                                 severity: i.severity === 'LOW' ? 'MEDIUM' : i.severity === 'MEDIUM' ? 'HIGH' : 'CRITICAL',
-                                lastModifiedBy: "Eshan Barua (Quick)",
+                                lastModifiedBy: "Alex Vance (Quick)",
                                 statusHistory: [
                                   ...getStatusHistory(i),
                                   {
                                     status: 'ESCALATED',
                                     timestamp: new Date().toISOString(),
-                                    changedBy: "Eshan Barua (CTO)",
+                                    changedBy: "Alex Vance (Admin)",
                                     message: "Incident escalated and severity boosted via list quick toolbar."
                                   }
                                 ]
@@ -8496,7 +8496,7 @@ Generated by SupportPilot AI Platform.
                   <Icons.CheckCircle2 className="h-4 w-4" />
                   <span>ArgoCD GitOps Sync: InSync</span>
                 </div>
-                <p className="text-slate-500">Last deployed commit: <span className="text-indigo-400">v2.14.3 (df8921a)</span> by eshan-cto 24 hours ago.</p>
+                <p className="text-slate-500">Last deployed commit: <span className="text-indigo-400">v2.14.3 (df8921a)</span> by admin-ops 24 hours ago.</p>
               </div>
             </div>
           )}
@@ -9448,7 +9448,7 @@ Generated by SupportPilot AI Platform.
               <div>
                 <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Active Operator</label>
                 <div className="rounded bg-slate-950 px-2.5 py-1.5 font-mono text-xxs text-slate-300">
-                  Eshan Barua (CTO) | eshanbaruabarua@gmail.com
+                  Alex Vance (Admin) | admin@supportpilot.ai
                 </div>
               </div>
 
@@ -9460,10 +9460,19 @@ Generated by SupportPilot AI Platform.
               </div>
 
               <div>
-                <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Electronic Signature Verification</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Electronic Signature Verification</label>
+                  <button
+                    type="button"
+                    onClick={() => setApprovalSignature('Alex Vance')}
+                    className="text-[9px] font-mono text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
+                  >
+                    Autofill "Alex Vance"
+                  </button>
+                </div>
                 <input
                   type="text"
-                  placeholder="Type 'Eshan Barua' to verify authority signature"
+                  placeholder="Type 'Alex Vance' or 'Admin' to verify authority signature"
                   value={approvalSignature}
                   onChange={(e) => setApprovalSignature(e.target.value)}
                   className="w-full rounded border border-slate-800 bg-slate-950 p-2 font-mono text-xxs text-emerald-400 outline-none focus:border-indigo-500"
@@ -9493,7 +9502,7 @@ Generated by SupportPilot AI Platform.
               </button>
               <button
                 onClick={handleConfirmActionApproval}
-                disabled={selectedIncident.severity === 'CRITICAL' && approvalSignature.trim() !== 'Eshan Barua'}
+                disabled={selectedIncident.severity === 'CRITICAL' && approvalSignature.trim() !== 'Alex Vance' && approvalSignature.trim().toLowerCase() !== 'admin'}
                 className="flex-1 py-2 bg-emerald-600 disabled:opacity-40 hover:bg-emerald-500 text-white rounded text-xxs font-bold transition-colors"
               >
                 Confirm Signature & Execute

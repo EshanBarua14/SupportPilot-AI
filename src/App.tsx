@@ -581,7 +581,8 @@ function AppContent() {
         const assigned = customIncidentAssignee[inc.id] || inc.assignee || '';
         return (
           assigned.toLowerCase().includes(ActiveUser.name.toLowerCase()) ||
-          assigned.toLowerCase().includes('eshan') ||
+          assigned.toLowerCase().includes('alex') ||
+          assigned.toLowerCase().includes('admin') ||
           assigned.toLowerCase().includes(ActiveUser.email.toLowerCase())
         );
       });
@@ -836,7 +837,7 @@ function AppContent() {
 
   const handleNotifyOnCallEngineer = (inc: any, e: React.MouseEvent) => {
     e.stopPropagation();
-    const engineer = inc.assignee || 'Senior On-Call Engineer (Eshan Barua)';
+    const engineer = inc.assignee || 'Senior On-Call Engineer (Alex Vance)';
     
     handleAddAuditLog(
       'SystemOperator',
@@ -1438,7 +1439,7 @@ function AppContent() {
                 onClick={() => {
                   setIsLocked(true);
                   handleAddAuditLog(
-                    "Eshan Barua (CTO)", 
+                    currentUser?.name || "Alex Vance (Admin)", 
                     "Manual Session Lock", 
                     "Compliance Engine", 
                     "SUCCESS", 
@@ -2517,7 +2518,7 @@ function AppContent() {
                                                                 <div className="absolute top-3 left-4 right-4 h-0.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500 z-0" />
                                                                 {[
                                                                   { title: 'Open', time: (inc.createdAt || '').slice(11, 16) || '22:15', actor: 'Watcher', icon: Icons.AlertCircle },
-                                                                  { title: 'Acknowledged', time: '22:18', actor: customIncidentAssignee[inc.id] || inc.assignee || 'Eshan Barua', icon: Icons.UserCheck },
+                                                                  { title: 'Acknowledged', time: '22:18', actor: customIncidentAssignee[inc.id] || inc.assignee || 'Alex Vance (Admin)', icon: Icons.UserCheck },
                                                                   { title: 'Investigating', time: '22:25', actor: 'SupportPilot AI', icon: Icons.Cpu },
                                                                   { title: 'Mitigating', time: '22:32', actor: 'Remediation Pod', icon: Icons.Zap },
                                                                   { title: 'Resolved', time: 'Est 22:45', actor: 'NOC Controller', icon: Icons.CheckCircle2 }
@@ -2908,7 +2909,7 @@ function AppContent() {
                                                       <div className="absolute top-3 left-4 right-4 h-0.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500 z-0" />
                                                       {[
                                                         { title: 'Open', time: (inc.createdAt || '').slice(11, 16) || '22:15', actor: 'Watcher', icon: Icons.AlertCircle },
-                                                        { title: 'Acknowledged', time: '22:18', actor: customIncidentAssignee[inc.id] || inc.assignee || 'Eshan Barua', icon: Icons.UserCheck },
+                                                        { title: 'Acknowledged', time: '22:18', actor: customIncidentAssignee[inc.id] || inc.assignee || 'Alex Vance (Admin)', icon: Icons.UserCheck },
                                                         { title: 'Investigating', time: '22:25', actor: 'SupportPilot AI', icon: Icons.Cpu },
                                                         { title: 'Mitigating', time: '22:32', actor: 'Remediation Pod', icon: Icons.Zap },
                                                         { title: 'Resolved', time: 'Est 22:45', actor: 'NOC Controller', icon: Icons.CheckCircle2 }
@@ -3834,7 +3835,7 @@ function AppContent() {
                     setSecondsRemaining(900);
                     setToastMessage("Active session extended for another 15 minutes.");
                     handleAddAuditLog(
-                      "Eshan Barua (CTO)",
+                      currentUser?.name || "Alex Vance (Admin)",
                       "Extend Session Handshake",
                       "Compliance Engine",
                       "SUCCESS",
@@ -3943,13 +3944,19 @@ function AppContent() {
                 className="mt-6 space-y-3.5"
               >
                 <div className="space-y-1 text-left">
-                  <label className="text-[9px] font-mono font-semibold text-slate-400 uppercase tracking-wider">
-                    Enter Operator Passcode
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-[9px] font-mono font-semibold text-slate-400 uppercase tracking-wider">
+                      Enter Operator Passcode
+                    </label>
+                    <span className="text-[9px] font-mono text-emerald-400 font-semibold">
+                      Demo: admin123
+                    </span>
+                  </div>
                   <div className="relative">
                     <input
                       type="password"
-                      placeholder="••••••••"
+                      defaultValue="admin123"
+                      placeholder="admin123"
                       autoFocus
                       required
                       className="w-full rounded-lg border border-slate-900 bg-slate-950 px-3 py-2.5 text-center font-mono text-xs text-white placeholder-slate-700 outline-none focus:border-indigo-500/50 transition-all"
@@ -4062,7 +4069,7 @@ function AppContent() {
 
                     if (nextFrozenState) {
                       handleAddAuditLog(
-                        "Eshan Barua (CTO)",
+                        currentUser?.name || "Alex Vance (Admin)",
                         "EMERGENCY SYSTEM FREEZE",
                         "System Kernel",
                         "SUCCESS",
@@ -4073,7 +4080,7 @@ function AppContent() {
                       }));
                     } else {
                       handleAddAuditLog(
-                        "Eshan Barua (CTO)",
+                        currentUser?.name || "Alex Vance (Admin)",
                         "SYSTEM RESTORED",
                         "System Kernel",
                         "SUCCESS",

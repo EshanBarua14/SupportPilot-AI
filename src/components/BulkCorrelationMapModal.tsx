@@ -263,7 +263,7 @@ export function BulkCorrelationMapModal({
 
     if (onAddAuditLog) {
       onAddAuditLog(
-        'Eshan Barua (CTO)',
+        'Alex Vance (Admin)',
         'D3 AI Correlation Map Rendered',
         'Topological Visualization Engine',
         'SUCCESS',

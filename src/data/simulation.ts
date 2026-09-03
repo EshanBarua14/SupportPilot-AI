@@ -2,8 +2,8 @@ import { Tenant, UserProfile, SupportAgent, Incident, KBArticle } from '../types
 
 export const ActiveUser: UserProfile = {
   id: "usr_cto_01",
-  name: "Eshan Barua",
-  email: "eshanbaruabarua@gmail.com",
+  name: "Alex Vance",
+  email: "admin@supportpilot.ai",
   role: "CTO",
   permissions: [
     "READ_TELEMETRY", "EXECUTE_REMEDIATION", "WRITE_RUNBOOKS", 
@@ -261,7 +261,7 @@ export const InitialIncidents: Incident[] = [
     title: "Billing Core Pod Crashed (OOMKilled - Error 137)",
     severity: "CRITICAL",
     status: "OPEN",
-    assignee: "Eshan Barua",
+    assignee: "Alex Vance",
     createdAt: "2026-07-12T22:15:00-07:00",
     appName: "Billing Core",
     description: "Customer raising issues in Discord: Billing system is showing 502 Bad Gateway during checkout. Stripe API handshakes failing.",
@@ -350,7 +350,7 @@ export const InitialIncidents: Incident[] = [
     title: "PostgreSQL Lock Contention - Checkout Service API Deadlock",
     severity: "CRITICAL",
     status: "OPEN",
-    assignee: "Eshan Barua",
+    assignee: "Alex Vance",
     createdAt: "2026-07-12T22:20:00-07:00",
     appName: "PCI Checkout Gateway",
     description: "WhatsApp Incident Ticket #2938: Fintech pay checkouts are stalling. Intercom alert is reporting transaction timeouts. Customers seeing spinner indefinitely.",
@@ -431,7 +431,7 @@ export const InitialIncidents: Incident[] = [
     title: "Webhook Delivery Failures - External API Route Latency",
     severity: "HIGH",
     status: "OPEN",
-    assignee: "Eshan Barua",
+    assignee: "Alex Vance",
     createdAt: "2026-07-12T22:25:00-07:00",
     appName: "External Webhooks Relay",
     description: "Slack notification from #alerts-global-logistics: Fleet tracker is failing to sync coordinate updates to external carrier API due to timeout (30 seconds limit breached).",
@@ -610,11 +610,11 @@ export const SeedAuditTrail = [
   {
     id: "aud_02",
     timestamp: "2026-07-12T22:35:45-07:00",
-    operator: "Eshan Barua",
+    operator: "Alex Vance (Admin)",
     action: "Oauth Gateway Setup",
     module: "Organizations System",
     status: "SUCCESS" as const,
-    payload: "CTO Eshan Barua registered Azure DevOps and Confluence REST API credentials."
+    payload: "Admin Alex Vance registered Azure DevOps and Confluence REST API credentials."
   }
 ];
 export const CommandList = [

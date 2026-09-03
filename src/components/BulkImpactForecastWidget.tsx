@@ -61,7 +61,7 @@ export function BulkImpactForecastWidget({ selectedIncidents, onAddAuditLog }: B
         const data = await response.json();
         if (onAddAuditLog) {
           onAddAuditLog(
-            'Eshan Barua (CTO)',
+            'Alex Vance (Admin)',
             'AI Bulk Impact Forecast',
             'Predictive Telemetry Engine',
             'SUCCESS',

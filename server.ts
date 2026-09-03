@@ -978,7 +978,7 @@ const aspnetTenants = [
 ];
 
 const aspnetUsers = [
-  { id: "u1", tenantId: "11111111-1111-1111-1111-111111111111", name: "Eshan Barua", email: "eshanbaruabarua@gmail.com", role: "CTO" },
+  { id: "u1", tenantId: "11111111-1111-1111-1111-111111111111", name: "Alex Vance", email: "admin@supportpilot.ai", role: "CTO" },
   { id: "u2", tenantId: "11111111-1111-1111-1111-111111111111", name: "Alice Jenkins", email: "alice@acme.com", role: "L1_ENGINEER" },
   { id: "u3", tenantId: "22222222-2222-2222-2222-222222222222", name: "David Kim", email: "dkim@fintechpay.global", role: "L2_ENGINEER" },
   { id: "u4", tenantId: "33333333-3333-3333-3333-333333333333", name: "Marcus Vance", email: "marcus.v@global-log.io", role: "READ_ONLY" }
@@ -993,7 +993,7 @@ let aspnetIncidents = [
     appName: "Billing Core",
     severity: "CRITICAL",
     status: "OPEN",
-    assignee: "Eshan Barua",
+    assignee: "Alex Vance",
     source: "Discord",
     customerName: "Alice Jenkins",
     customerProfile: "VP of Product, Acme Cloud Corp.",
@@ -1008,7 +1008,7 @@ let aspnetIncidents = [
     appName: "PCI Checkout Gateway",
     severity: "CRITICAL",
     status: "OPEN",
-    assignee: "Eshan Barua",
+    assignee: "Alex Vance",
     source: "WhatsApp",
     customerName: "David Kim",
     customerProfile: "Security Operations Director, Fintech Pay Global",

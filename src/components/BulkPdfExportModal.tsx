@@ -19,7 +19,7 @@ export function BulkPdfExportModal({
   const [includeLogs, setIncludeLogs] = useState(true);
   const [includeTimeline, setIncludeTimeline] = useState(true);
   const [reportTitle, setReportTitle] = useState('Consolidated Incident Incident Operations Summary');
-  const [preparedBy, setPreparedBy] = useState('Eshan Barua (CTO / Incident Command)');
+  const [preparedBy, setPreparedBy] = useState('Alex Vance (Admin / Incident Command)');
 
   if (!isOpen) return null;
 

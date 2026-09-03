@@ -71,7 +71,7 @@ export function SmartAutoCategorizationModal({
 
     if (onAddAuditLog) {
       onAddAuditLog(
-        'Eshan Barua (CTO)',
+        'Alex Vance (Admin)',
         'Smart AI Auto-Categorization Applied',
         'IncidentWorkspace',
         'SUCCESS',

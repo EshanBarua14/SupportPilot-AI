@@ -309,7 +309,7 @@ describe('Phase 6: Cryptographic Audit Hash Chaining & Tamper Detection', () => 
     const block1 = {
       id: 'aud_1',
       timestamp: '2026-09-01T00:01:00Z',
-      operator: 'eshan@supportpilot.ai',
+      operator: 'admin@supportpilot.ai',
       action: 'INCIDENT_RESOLVED',
       module: 'IncidentManager',
       payload: '{"incidentId":"INC-101"}',

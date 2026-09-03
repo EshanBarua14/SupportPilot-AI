@@ -103,7 +103,7 @@ export function BulkAnomalyDetectionModal({
 
       if (onAddAuditLog) {
         onAddAuditLog(
-          'Eshan Barua (CTO)',
+          'Alex Vance (Admin)',
           'Bulk Telemetry Anomaly Detection',
           'Statistical Analytics Engine',
           'SUCCESS',

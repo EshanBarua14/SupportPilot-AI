@@ -60,7 +60,7 @@ export function ExecutiveSearchSummaryModal({
 
         if (onAddAuditLog) {
           onAddAuditLog(
-            'Eshan Barua (CTO)',
+            'Alex Vance (Admin)',
             'Gemini Search Executive Summary Generated',
             'SearchAnalytics',
             'SUCCESS',

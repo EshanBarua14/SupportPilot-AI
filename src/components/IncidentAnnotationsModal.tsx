@@ -28,7 +28,7 @@ export function IncidentAnnotationsModal({
 }: IncidentAnnotationsModalProps) {
   const [annotations, setAnnotations] = useState<IncidentAnnotation[]>([]);
   const [newText, setNewText] = useState('');
-  const [authorName, setAuthorName] = useState('Eshan Barua (CTO)');
+  const [authorName, setAuthorName] = useState('Alex Vance (Admin)');
 
   useEffect(() => {
     if (!incident) return;

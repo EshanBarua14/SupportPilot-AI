@@ -32,7 +32,7 @@ export default function RunbookManager({ modelSelection, onAddAuditLog }: Runboo
 
     // Audit and notify
     onAddAuditLog(
-      "Eshan Barua (CTO)",
+      "Alex Vance (Admin)",
       "BATCH REVERT REMEDIATION",
       "Support Matrix",
       "SUCCESS",

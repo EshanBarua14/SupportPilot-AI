@@ -147,6 +147,12 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
+        // Automatically sanitize legacy user profile if it had personal name/email
+        if (parsed.email !== 'admin@supportpilot.ai' && (!parsed.email?.endsWith('@supportpilot.ai') || parsed.role === 'CTO')) {
+          parsed.name = 'Alex Vance (Admin)';
+          parsed.email = 'admin@supportpilot.ai';
+          localStorage.setItem('supportpilot_current_user', JSON.stringify(parsed));
+        }
         if (savedToken) {
           parsed.sessionToken = savedToken;
         }
@@ -155,15 +161,15 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
     }
     const defaultUser: AuthUser = {
       id: 'usr_cto_01',
-      name: 'Eshan Barua (CTO)',
-      email: 'eshanbaruabarua@gmail.com',
+      name: 'Alex Vance (Admin)',
+      email: 'admin@supportpilot.ai',
       role: 'Chief Technology Officer & Lead Security Auditor',
       avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=250&q=80',
       pod: 'SRE & Executive Operations',
       phone: '+1 (555) 019-2834',
       is2FAEnabled: true,
       authMethod: 'google',
-      sessionToken: 'sp_sess_init_cto_2026',
+      sessionToken: 'sp_sess_init_admin_2026',
     };
     localStorage.setItem('supportpilot_session_token', defaultUser.sessionToken!);
     localStorage.setItem('supportpilot_current_user', JSON.stringify(defaultUser));
@@ -332,7 +338,7 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
       setToastMessage(`Successfully executed bulk ${action} for ${removedCount} active system alerts.`);
 
       handleAddAuditLog(
-        "Eshan Barua (CTO)",
+        "Alex Vance (Admin)",
         `Bulk ${action} Alerts`,
         "System Monitoring",
         "SUCCESS",
@@ -358,7 +364,7 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
     localStorage.setItem('supportpilot_uidensity', newDensity);
     setUiDensity(newDensity);
     handleAddAuditLog(
-      "Eshan Barua (CTO)",
+      "Alex Vance (Admin)",
       "Update UI Density",
       "UI Console",
       "SUCCESS",
@@ -372,7 +378,7 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
     document.documentElement.classList.add(`theme-${newTheme}`);
     setTheme(newTheme);
     handleAddAuditLog(
-      "Eshan Barua (CTO)",
+      "Alex Vance (Admin)",
       "Update System Theme",
       "UI Console",
       "SUCCESS",
@@ -538,7 +544,7 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
   const handleExecuteCommandFromPalette = useCallback((commandName: string) => {
     setToastMessage(`Dispatched automation script: "${commandName}" to live cluster pods.`);
     handleAddAuditLog(
-      "Eshan Barua (CTO)",
+      "Alex Vance (Admin)",
       "Command Palette Exec",
       "Automation Engine",
       "SUCCESS",
@@ -578,48 +584,48 @@ export function SupportPilotProvider({ children }: SupportPilotProviderProps) {
         if (key === 'w') {
           e.preventDefault();
           setActiveTab('aspnet');
-          handleAddAuditLog("Eshan Barua (CTO)", "Shortcut Navigation", "Routing Engine", "SUCCESS", "Switched tab to C# ASP.NET Engine");
+          handleAddAuditLog("Alex Vance (Admin)", "Shortcut Navigation", "Routing Engine", "SUCCESS", "Switched tab to C# ASP.NET Engine");
         } else if (key === 'i') {
           e.preventDefault();
           setActiveTab('workspace');
-          handleAddAuditLog("Eshan Barua (CTO)", "Shortcut Navigation", "Routing Engine", "SUCCESS", "Focused Incident Workspace");
+          handleAddAuditLog("Alex Vance (Admin)", "Shortcut Navigation", "Routing Engine", "SUCCESS", "Focused Incident Workspace");
         } else if (key === 'p') {
           e.preventDefault();
           window.dispatchEvent(new CustomEvent('toggle-priority-filter'));
-          handleAddAuditLog("Eshan Barua (CTO)", "Shortcut Action", "Operational Workspace", "SUCCESS", "Toggled incident list priority filter");
+          handleAddAuditLog("Alex Vance (Admin)", "Shortcut Action", "Operational Workspace", "SUCCESS", "Toggled incident list priority filter");
         } else if (key === 'n') {
           e.preventDefault();
           setActiveTab('workspace');
           window.dispatchEvent(new CustomEvent('create-new-ticket'));
-          handleAddAuditLog("Eshan Barua (CTO)", "Shortcut Action", "Operational Workspace", "SUCCESS", "Triggered manual incident ticket creation");
+          handleAddAuditLog("Alex Vance (Admin)", "Shortcut Action", "Operational Workspace", "SUCCESS", "Triggered manual incident ticket creation");
         } else if (key === 'k') {
           e.preventDefault();
           setActiveTab('runbooks');
-          handleAddAuditLog("Eshan Barua (CTO)", "Shortcut Navigation", "Routing Engine", "SUCCESS", "Switched tab to Knowledge Base");
+          handleAddAuditLog("Alex Vance (Admin)", "Shortcut Navigation", "Routing Engine", "SUCCESS", "Switched tab to Knowledge Base");
         } else if (key === 'a') {
           e.preventDefault();
           setActiveTab('agents');
-          handleAddAuditLog("Eshan Barua (CTO)", "Shortcut Navigation", "Routing Engine", "SUCCESS", "Switched tab to AI Agent Matrix");
+          handleAddAuditLog("Alex Vance (Admin)", "Shortcut Navigation", "Routing Engine", "SUCCESS", "Switched tab to AI Agent Matrix");
         } else if (key === 'm') {
           e.preventDefault();
           setActiveTab('metrics');
-          handleAddAuditLog("Eshan Barua (CTO)", "Shortcut Navigation", "Routing Engine", "SUCCESS", "Switched tab to NOC & SLA Dashboard");
+          handleAddAuditLog("Alex Vance (Admin)", "Shortcut Navigation", "Routing Engine", "SUCCESS", "Switched tab to NOC & SLA Dashboard");
         } else if (key === 'd') {
           e.preventDefault();
           setIsPinned((prev) => !prev);
-          handleAddAuditLog("Eshan Barua (CTO)", "Shortcut Toggle", "UI Layout", "SUCCESS", "Toggled sidebar pinning state");
+          handleAddAuditLog("Alex Vance (Admin)", "Shortcut Toggle", "UI Layout", "SUCCESS", "Toggled sidebar pinning state");
         } else if (key === 's') {
           e.preventDefault();
           setActiveTab('settings');
-          handleAddAuditLog("Eshan Barua (CTO)", "Shortcut Navigation", "Routing Engine", "SUCCESS", "Switched tab to System Settings");
+          handleAddAuditLog("Alex Vance (Admin)", "Shortcut Navigation", "Routing Engine", "SUCCESS", "Switched tab to System Settings");
         } else if (key === 'u') {
           e.preventDefault();
-          handleAddAuditLog("Eshan Barua (CTO)", "Manual Audit Seed", "Compliance Engine", "SUCCESS", "Triggered manual audit log entry creation via Alt+U shortcut");
+          handleAddAuditLog("Alex Vance (Admin)", "Manual Audit Seed", "Compliance Engine", "SUCCESS", "Triggered manual audit log entry creation via Alt+U shortcut");
           setToastMessage("Seeded manual audit entry in immutable ledger.");
         } else if (key === 'r') {
           e.preventDefault();
           setToastMessage("Broadcasted live SignalR diagnostic ping to subscribers.");
-          handleAddAuditLog("Eshan Barua (CTO)", "SignalR Broadcast", "SignalR Engine", "SUCCESS", "Broadcasted live real-time ping to connected C# frontend and mobile clients");
+          handleAddAuditLog("Alex Vance (Admin)", "SignalR Broadcast", "SignalR Engine", "SUCCESS", "Broadcasted live real-time ping to connected C# frontend and mobile clients");
         } else if (key === 'f') {
           e.preventDefault();
           document.getElementById('unified-search-input')?.focus();

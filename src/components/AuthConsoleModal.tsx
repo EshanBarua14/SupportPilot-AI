@@ -38,8 +38,8 @@ export default function AuthConsoleModal({
   const [mode, setMode] = useState<AuthMode>('login');
 
   // Form State - Login
-  const [email, setEmail] = useState('eshanbaruabarua@gmail.com');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('admin@supportpilot.ai');
+  const [password, setPassword] = useState('admin123');
   // Form State - Password Visibility Toggles
   const [showPassword, setShowPassword] = useState(false);
   const [showRegPassword, setShowRegPassword] = useState(false);
@@ -71,21 +71,21 @@ export default function AuthConsoleModal({
   const [phoneCountry, setPhoneCountry] = useState('+1');
   const [phoneNum, setPhoneNum] = useState('(555) 234-5678');
   const [otpSent, setOtpSent] = useState(false);
-  const [otpCode, setOtpCode] = useState(['', '', '', '', '', '']);
+  const [otpCode, setOtpCode] = useState(['9', '8', '7', '6', '5', '4']);
   const [otpTimer, setOtpTimer] = useState(30);
 
   // Form State - Forgot Password Recovery Flow
-  const [forgotEmailOrPhone, setForgotEmailOrPhone] = useState('eshanbaruabarua@gmail.com');
+  const [forgotEmailOrPhone, setForgotEmailOrPhone] = useState('admin@supportpilot.ai');
   const [resetSent, setResetSent] = useState(false);
   const [dispatchedResetToken, setDispatchedResetToken] = useState('RESET-TOK-8942-X9');
   const [dispatchedResetCode, setDispatchedResetCode] = useState('482910');
-  const [inputResetToken, setInputResetToken] = useState('');
+  const [inputResetToken, setInputResetToken] = useState('RESET-TOK-8942-X9');
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [showEmailInboxPreview, setShowEmailInboxPreview] = useState(true);
 
   // Form State - 2FA Verification (Login Challenge)
-  const [twoFactorCode, setTwoFactorCode] = useState(['', '', '', '', '', '']);
+  const [twoFactorCode, setTwoFactorCode] = useState(['8', '4', '9', '2', '0', '1']);
   const [twoFactorMethod, setTwoFactorMethod] = useState<'totp' | 'sms'>('totp');
   const [pendingUser, setPendingUser] = useState<AuthUser | null>(null);
 
@@ -159,8 +159,8 @@ export default function AuthConsoleModal({
       const sessionToken = `sp_sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       const targetUser: AuthUser = {
         id: 'usr_cto_01',
-        name: 'Eshan Barua (CTO)',
-        email: email || 'eshanbaruabarua@gmail.com',
+        name: 'Alex Vance (Admin)',
+        email: email || 'admin@supportpilot.ai',
         role: 'Chief Technology Officer & Lead Security Auditor',
         avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=250&q=80',
         pod: 'SRE & Executive Operations',
@@ -172,7 +172,7 @@ export default function AuthConsoleModal({
 
       if (targetUser.is2FAEnabled) {
         setPendingUser(targetUser);
-        setTwoFactorCode(['', '', '', '', '', '']);
+        setTwoFactorCode(['8', '4', '9', '2', '0', '1']);
         setMode('2fa_verify');
         handleAddAuditLog(
           targetUser.name,
@@ -243,8 +243,8 @@ export default function AuthConsoleModal({
       const sessionToken = `sp_sess_sso_${ssoProvider}_${Date.now()}`;
       const ssoUser: AuthUser = {
         id: `usr_sso_${Date.now().toString().slice(-4)}`,
-        name: 'Eshan Barua (SSO Operator)',
-        email: 'eshanbaruabarua@gmail.com',
+        name: 'Alex Vance (SSO Operator)',
+        email: 'admin@supportpilot.ai',
         role: `Enterprise Operator (${ssoProvider.toUpperCase()})`,
         avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=250&q=80',
         pod: 'SRE & Platform Engineering',
@@ -308,8 +308,8 @@ export default function AuthConsoleModal({
       const sessionToken = `sp_sess_otp_${Date.now()}`;
       const phoneUser: AuthUser = {
         id: 'usr_phone_03',
-        name: 'Eshan Barua (Verified Phone Operator)',
-        email: 'eshanbaruabarua@gmail.com',
+        name: 'Alex Vance (Verified Phone Operator)',
+        email: 'admin@supportpilot.ai',
         role: 'Verified Support Engineer',
         avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=250&q=80',
         pod: 'Security & Incident Response',
@@ -730,15 +730,15 @@ export default function AuthConsoleModal({
                   <button
                     type="button"
                     onClick={() => {
-                      setEmail('eshanbaruabarua@gmail.com');
-                      setPassword('cto_pass_2026');
-                      setSuccessMessage('Autofilled Eshan Barua (CTO) credentials. Click Sign In.');
+                      setEmail('admin@supportpilot.ai');
+                      setPassword('admin123');
+                      setSuccessMessage('Autofilled Admin credentials. Click Sign In.');
                     }}
                     className="p-1.5 rounded-lg bg-slate-900/90 hover:bg-indigo-600/30 border border-slate-800 text-slate-200 hover:text-white transition-all text-center cursor-pointer flex flex-col items-center"
-                    title="Autofill Eshan Barua (CTO) credentials"
+                    title="Autofill Admin credentials"
                   >
-                    <span className="font-bold text-indigo-300 truncate w-full">Eshan Barua</span>
-                    <span className="text-[7.5px] text-slate-400">CTO</span>
+                    <span className="font-bold text-indigo-300 truncate w-full">Admin (Alex)</span>
+                    <span className="text-[7.5px] text-slate-400">Admin</span>
                   </button>
 
                   <button
@@ -864,7 +864,7 @@ export default function AuthConsoleModal({
                       type="text"
                       value={regName}
                       onChange={(e) => setRegName(e.target.value)}
-                      placeholder="Eshan Barua"
+                      placeholder="Alex Vance"
                       required
                       className={`w-full rounded-xl border bg-slate-900 px-3 py-2 text-xs text-white placeholder-slate-600 focus:outline-none ${
                         invalidFields.includes('regName') ? 'border-rose-500/80 bg-rose-950/20' : 'border-slate-800 focus:border-indigo-500'
@@ -880,7 +880,7 @@ export default function AuthConsoleModal({
                       type="email"
                       value={regEmail}
                       onChange={(e) => setRegEmail(e.target.value)}
-                      placeholder="eshan@company.com"
+                      placeholder="alex.vance@company.com"
                       required
                       className={`w-full rounded-xl border bg-slate-900 px-3 py-2 text-xs text-white placeholder-slate-600 focus:outline-none ${
                         invalidFields.includes('regEmail') ? 'border-rose-500/80 bg-rose-950/20' : 'border-slate-800 focus:border-indigo-500'
@@ -1382,20 +1382,20 @@ export default function AuthConsoleModal({
                 <div className="space-y-2 text-left pt-2">
                   <button
                     type="button"
-                    onClick={() => handleGoogleOAuthSelect('eshanbaruabarua@gmail.com', 'Eshan Barua (CTO)')}
+                    onClick={() => handleGoogleOAuthSelect('admin@supportpilot.ai', 'Alex Vance (Admin)')}
                     className="w-full flex items-center justify-between p-3 rounded-xl bg-slate-950 hover:bg-indigo-950/40 border border-slate-800 hover:border-indigo-500/50 transition-all text-left cursor-pointer group"
                   >
                     <div className="flex items-center space-x-3">
                       <img
                         src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=250&q=80"
-                        alt="Eshan Barua"
+                        alt="Alex Vance"
                         className="h-8 w-8 rounded-full border border-indigo-500/30 object-cover"
                       />
                       <div>
                         <div className="text-xs font-bold text-white group-hover:text-indigo-300">
-                          Eshan Barua (CTO)
+                          Alex Vance (Admin)
                         </div>
-                        <div className="text-[9px] font-mono text-slate-400">eshanbaruabarua@gmail.com</div>
+                        <div className="text-[9px] font-mono text-slate-400">admin@supportpilot.ai</div>
                       </div>
                     </div>
                     <Icons.ChevronRight className="h-4 w-4 text-slate-500 group-hover:text-indigo-400" />
