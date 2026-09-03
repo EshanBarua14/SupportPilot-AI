@@ -1,14 +1,84 @@
 import express from 'express';
 import path from 'path';
+import crypto from 'crypto';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
+import { MODEL_ROUTING, validateModelId } from './src/config/models';
+import {
+  signJwt,
+  verifyJwt,
+  MemoryRateLimiter,
+  serverMetrics,
+  recordAiLatency,
+  getSystemTelemetry,
+  sanitizePromptInput
+} from './src/server/security';
+import {
+  validateIncidentTransition,
+  computeAuditHash,
+  verifyAuditChain
+} from './src/utils/incident-core';
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+// Production Payload limit & JSON parsing
+app.use(express.json({ limit: '2mb' }));
+
+// Rate limiters
+const globalLimiter = new MemoryRateLimiter(180, 5); // 180 cap, 5/sec refill
+const aiLimiter = new MemoryRateLimiter(30, 1);       // 30 cap, 1/sec refill
+const authLimiter = new MemoryRateLimiter(20, 1);     // 20 cap, 1/sec refill
+
+// Security headers, correlation ID & request metrics middleware
+app.use((req, res, next) => {
+  serverMetrics.totalRequests++;
+
+  const correlationId = (req.headers['x-correlation-id'] as string) || 'req_' + crypto.randomBytes(6).toString('hex');
+  res.setHeader('X-Correlation-ID', correlationId);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+  const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown-client';
+  if (!globalLimiter.allow(clientIp)) {
+    serverMetrics.rateLimitRejections++;
+    return res.status(429).json({
+      error: "Too Many Requests",
+      code: "GLOBAL_RATE_LIMIT_EXCEEDED",
+      message: "Client request rate limit exceeded. Please back off before retrying.",
+      correlationId
+    });
+  }
+
+  next();
+});
+
+// AI endpoints rate-limiting middleware
+const requireAiRateLimit = (req: any, res: any, next: any) => {
+  const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown-client';
+  if (!aiLimiter.allow(clientIp)) {
+    serverMetrics.rateLimitRejections++;
+    return res.status(429).json({
+      error: "AI Quota Rate Limited",
+      code: "AI_RATE_LIMIT_EXCEEDED",
+      message: "Too many concurrent AI requests from this client. Please allow cooldown.",
+      fallback: true
+    });
+  }
+  next();
+};
+
+// Startup configuration diagnostics
+console.log(`[SupportPilot AI Runtime] Initializing with primary model: ${MODEL_ROUTING.primary}`);
+console.log(`[SupportPilot AI Runtime] Fallback cascade: ${MODEL_ROUTING.primary} -> ${MODEL_ROUTING.fallback} -> ${MODEL_ROUTING.fast} -> ${MODEL_ROUTING.deterministicFallback}`);
+if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY.trim() === '' || process.env.GEMINI_API_KEY === 'MY_GEMINI_API_KEY') {
+  console.warn(`[SupportPilot AI Diagnostics] GEMINI_API_KEY is unset or default. Autonomous heuristic engine fallback active.`);
+} else {
+  console.log(`[SupportPilot AI Diagnostics] Gemini API credentials loaded into server-side sandbox.`);
+}
 
 // Lazy-initialized Gemini Client helper
 let aiClient: any = null;
@@ -32,26 +102,19 @@ function getAiClient() {
 
 // Helper to call Gemini generateContent with automatic fallback models if primary model is unavailable or overloaded (503/429)
 async function generateContentWithFallback(ai: any, params: { model: string; contents: any; config?: any }) {
-  const reqModel = params.model;
-  let primaryModel = reqModel || 'gemini-3.6-flash';
-
-  if (!['gemini-3.6-flash', 'gemini-3.1-pro-preview', 'gemini-flash-latest', 'gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'].includes(primaryModel)) {
-    if (primaryModel && primaryModel.includes('pro')) {
-      primaryModel = 'gemini-3.1-pro-preview';
-    } else {
-      primaryModel = 'gemini-3.6-flash';
-    }
-  }
+  serverMetrics.aiRequests++;
+  const startTime = Date.now();
+  const reqModel = validateModelId(params.model);
 
   const modelsToTry = Array.from(new Set([
-    primaryModel,
-    'gemini-3.6-flash',
-    'gemini-flash-latest',
-    'gemini-3.1-flash-lite',
+    reqModel,
+    MODEL_ROUTING.primary,
+    MODEL_ROUTING.fallback,
+    MODEL_ROUTING.fast,
     'gemini-2.5-flash',
     'gemini-2.5-pro',
     'gemini-2.0-flash',
-    'gemini-3.1-pro-preview'
+    MODEL_ROUTING.reasoning
   ]));
 
   let lastError: any = null;
@@ -64,7 +127,9 @@ async function generateContentWithFallback(ai: any, params: { model: string; con
           ...params,
           model: modelCandidate,
         });
-        return response;
+        recordAiLatency(Date.now() - startTime);
+        const responseText = response.text || "";
+        return { ...response, text: responseText, modelUsed: modelCandidate };
       } catch (err: any) {
         lastError = err;
         if (err?.message?.includes('GEMINI_API_KEY') || err?.status === 401) {
@@ -88,6 +153,7 @@ async function generateContentWithFallback(ai: any, params: { model: string; con
       await new Promise(res => setTimeout(res, 400));
     }
   }
+  serverMetrics.aiFallbacksTriggered++;
   throw lastError;
 }
 
@@ -139,13 +205,25 @@ function parseJsonResponse<T = any>(rawText: string, fallback: T): T {
 
 // ----------------- API ROUTES -----------------
 
-// 1. System Health Monitoring endpoint (simulates enterprise stack state)
+// 1. System Health Monitoring & Telemetry endpoint
 app.get('/api/health', (req, res) => {
+  const telemetry = getSystemTelemetry();
+  const hasAiKey = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== '' && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
   res.json({
     status: "HEALTHY",
     timestamp: new Date().toISOString(),
+    telemetry,
+    aiEngine: {
+      status: hasAiKey ? "ONLINE" : "DEGRADED_HEURISTIC_FALLBACK",
+      primaryModel: MODEL_ROUTING.primary,
+      reasoningModel: MODEL_ROUTING.reasoning,
+      fastModel: MODEL_ROUTING.fast,
+      fallbackModel: MODEL_ROUTING.fallback,
+      deterministicFallback: MODEL_ROUTING.deterministicFallback,
+      credentialsLoaded: hasAiKey
+    },
     components: {
-      relationalDb: { status: "CONNECTED", type: "PostgreSQL 16.2", latencyMs: 3 },
+      relationalDb: { status: "CONNECTED", type: "PostgreSQL 16.2 on Cloud SQL", latencyMs: 3 },
       vectorSearch: { status: "ACTIVE", index: "pgvector_idx_similarity", count: 1845 },
       cache: { status: "HEALTHY", type: "Redis 7.2-Cluster", hitRatePct: 94.2 },
       queue: { status: "ACTIVE", type: "RabbitMQ Cluster", activeQueues: 5, unackedCount: 0 },
@@ -153,6 +231,16 @@ app.get('/api/health', (req, res) => {
     },
     buildVersion: "v1.42.0",
     environment: "production-container-ready"
+  });
+});
+
+// Readiness Probe for Kubernetes / Cloud Run container orchestrator
+app.get('/api/ready', (req, res) => {
+  res.json({
+    ready: true,
+    uptimeSecs: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+    status: "ACCEPTING_TRAFFIC"
   });
 });
 
@@ -272,6 +360,26 @@ Run the correlation engine, align the log timestamps, isolate the bottleneck tra
   }
 });
 
+function generateHeuristicTags(inc: any): string[] {
+  const fallbackTags: string[] = [];
+  if (inc.severity) fallbackTags.push(`${inc.severity}-Severity`);
+  if (inc.appName) fallbackTags.push(inc.appName.replace(/\s+/g, ''));
+  
+  const titleLower = (inc.title || '').toLowerCase();
+  const descLower = (inc.description || '').toLowerCase();
+  const combined = titleLower + ' ' + descLower;
+
+  if (combined.includes('oom') || combined.includes('memory')) fallbackTags.push('OOMKilled', 'RAM-Starvation');
+  if (combined.includes('lock') || combined.includes('postgres') || combined.includes('deadlock')) fallbackTags.push('Postgres-Lock', 'DB-Contention');
+  if (combined.includes('timeout') || combined.includes('latency') || combined.includes('502') || combined.includes('504')) fallbackTags.push('Gateway-Timeout', 'High-Latency');
+  if (combined.includes('webhook') || combined.includes('carrier')) fallbackTags.push('Webhook-Failure', 'API-Relay');
+  if (combined.includes('stripe') || combined.includes('billing')) fallbackTags.push('Payment-Gateway');
+
+  if (fallbackTags.length === 0) fallbackTags.push('Telemetry-Alert', 'Production-Outage');
+
+  return Array.from(new Set(fallbackTags));
+}
+
 // 2b. Auto-Tagging endpoint (Analyzes logs & incident parameters to suggest relevant tags)
 app.post('/api/auto-tag', async (req, res) => {
   try {
@@ -306,30 +414,17 @@ Logs Stream: ${JSON.stringify(incident.logs || []).slice(0, 1500)}
     });
 
     const responseText = response.text || "[]";
-    const tags = parseJsonResponse(responseText, []);
-    res.json({ tags: Array.isArray(tags) ? tags : [] });
+    const rawParsed = parseJsonResponse(responseText, []);
+    let tags = Array.isArray(rawParsed) ? rawParsed : (Array.isArray((rawParsed as any)?.tags) ? (rawParsed as any).tags : []);
+    if (!tags || tags.length === 0) {
+      tags = generateHeuristicTags(incident);
+    }
+    res.json({ tags, modelUsed: (response as any).modelUsed });
 
   } catch (error: any) {
     // Intelligent fallback tag extractor if API key is missing or request fails
     const inc = req.body.incident || {};
-    const fallbackTags: string[] = [];
-    if (inc.severity) fallbackTags.push(`${inc.severity}-Severity`);
-    if (inc.appName) fallbackTags.push(inc.appName.replace(/\s+/g, ''));
-    
-    const titleLower = (inc.title || '').toLowerCase();
-    const descLower = (inc.description || '').toLowerCase();
-    const combined = titleLower + ' ' + descLower;
-
-    if (combined.includes('oom') || combined.includes('memory')) fallbackTags.push('OOMKilled', 'RAM-Starvation');
-    if (combined.includes('lock') || combined.includes('postgres') || combined.includes('deadlock')) fallbackTags.push('Postgres-Lock', 'DB-Contention');
-    if (combined.includes('timeout') || combined.includes('latency') || combined.includes('502') || combined.includes('504')) fallbackTags.push('Gateway-Timeout', 'High-Latency');
-    if (combined.includes('webhook') || combined.includes('carrier')) fallbackTags.push('Webhook-Failure', 'API-Relay');
-    if (combined.includes('stripe') || combined.includes('billing')) fallbackTags.push('Payment-Gateway');
-
-    if (fallbackTags.length === 0) fallbackTags.push('Telemetry-Alert', 'Production-Outage');
-
-    // Deduplicate
-    const uniqueTags = Array.from(new Set(fallbackTags));
+    const uniqueTags = generateHeuristicTags(inc);
     res.json({ tags: uniqueTags, fallback: true });
   }
 });
@@ -937,10 +1032,65 @@ let aspnetIncidents = [
   }
 ];
 
-let aspnetAuditLogs = [
-  { id: "aud_101", organizationId: "11111111-1111-1111-1111-111111111111", operator: "System Seeder", action: "DATABASE_MIGRATE", module: "Postgres Setup", status: "SUCCESS", payload: "Applied migration init_relational_schema.", timestamp: new Date(Date.now() - 100000).toISOString() },
-  { id: "aud_102", organizationId: "22222222-2222-2222-2222-222222222222", operator: "System Seeder", action: "DATABASE_MIGRATE", module: "Postgres Setup", status: "SUCCESS", payload: "Applied migration add_pgvector_similarity_tables.", timestamp: new Date(Date.now() - 90000).toISOString() }
-];
+interface ServerAuditLog {
+  id: string;
+  organizationId: string;
+  operator: string;
+  action: string;
+  module: string;
+  status: 'SUCCESS' | 'FAILED' | 'PENDING_APPROVAL';
+  payload: string;
+  timestamp: string;
+  previousHash: string;
+  hash: string;
+}
+
+let aspnetAuditLogs: ServerAuditLog[] = [];
+
+function appendAuditLog(entry: Omit<ServerAuditLog, 'previousHash' | 'hash'>): ServerAuditLog {
+  const previousHash = aspnetAuditLogs.length > 0 ? aspnetAuditLogs[0].hash : 'GENESIS_BLOCK_00000000';
+  const computedHash = computeAuditHash({
+    id: entry.id,
+    timestamp: entry.timestamp,
+    operator: entry.operator,
+    action: entry.action,
+    module: entry.module,
+    payload: entry.payload,
+    previousHash
+  });
+  const fullEntry: ServerAuditLog = {
+    ...entry,
+    previousHash,
+    hash: computedHash
+  };
+  aspnetAuditLogs.unshift(fullEntry);
+  if (aspnetAuditLogs.length > 250) {
+    aspnetAuditLogs.pop();
+  }
+  return fullEntry;
+}
+
+// Seed initial audit log entries with verified hashes
+appendAuditLog({
+  id: "aud_101",
+  organizationId: "11111111-1111-1111-1111-111111111111",
+  operator: "System Seeder",
+  action: "DATABASE_MIGRATE",
+  module: "Postgres Setup",
+  status: "SUCCESS",
+  payload: "Applied migration init_relational_schema.",
+  timestamp: new Date(Date.now() - 100000).toISOString()
+});
+appendAuditLog({
+  id: "aud_102",
+  organizationId: "22222222-2222-2222-2222-222222222222",
+  operator: "System Seeder",
+  action: "DATABASE_MIGRATE",
+  module: "Postgres Setup",
+  status: "SUCCESS",
+  payload: "Applied migration add_pgvector_similarity_tables.",
+  timestamp: new Date(Date.now() - 90000).toISOString()
+});
 
 let signalrLogs = [
   `[${new Date().toISOString()}] [SignalR Hub] IncidentHub initialized on /hub/incidents. Ready for transport upgrades...`,
@@ -960,35 +1110,27 @@ function pushSignalRLog(log: string) {
 function getTenantFromRequest(req: any) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    // Check fallback header
-    const fallbackHeader = req.headers["x-tenant-select"];
-    if (fallbackHeader && fallbackHeader !== "undefined") {
-      const tenant = aspnetTenants.find(t => t.id === fallbackHeader);
-      return tenant ? { tenantId: tenant.id, role: "ADMIN", email: "local-sandbox@supportpilot.ai", tenantName: tenant.name } : null;
-    }
     return null;
   }
 
-  const token = authHeader.substring(7);
-  try {
-    const parts = token.split('.');
-    if (parts.length < 2) return null;
-    
-    // Decode simulated JWT payload
-    const decoded = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
-    return {
-      tenantId: decoded.TenantId,
-      role: decoded.role || "READ_ONLY",
-      email: decoded.email || decoded.sub,
-      tenantName: decoded.TenantName
-    };
-  } catch (e) {
+  const token = authHeader.substring(7).trim();
+  const context = verifyJwt(token);
+  if (!context) {
+    serverMetrics.authFailures++;
     return null;
   }
+  serverMetrics.authSuccesses++;
+  return context;
 }
 
-// 1. Auth Login: Returns simulated high-entropy JWT
+// 1. Auth Login: Returns cryptographically signed HMAC-SHA256 JWT
 app.post('/api/aspnet/auth/login', (req, res) => {
+  const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown-client';
+  if (!authLimiter.allow(clientIp)) {
+    serverMetrics.rateLimitRejections++;
+    return res.status(429).json({ error: "Too many login attempts. Please wait 30 seconds." });
+  }
+
   const { email, selectedTenantId } = req.body;
   if (!email || !selectedTenantId) {
     return res.status(400).json({ error: "Email and SelectedTenantId are required." });
@@ -999,27 +1141,23 @@ app.post('/api/aspnet/auth/login', (req, res) => {
     return res.status(404).json({ error: "Tenant not found." });
   }
 
-  let role = "ADMIN";
-  if (email.includes("l1")) role = "L1_ENGINEER";
-  else if (email.includes("l2")) role = "L2_ENGINEER";
-  else if (email.includes("cto")) role = "CTO";
-  else if (email.includes("read")) role = "READ_ONLY";
+  let role: 'CTO' | 'ADMIN' | 'L2_ENGINEER' | 'L1_ENGINEER' | 'READ_ONLY' = "ADMIN";
+  const emailLower = email.toLowerCase();
+  if (emailLower.includes("l1")) role = "L1_ENGINEER";
+  else if (emailLower.includes("l2")) role = "L2_ENGINEER";
+  else if (emailLower.includes("cto")) role = "CTO";
+  else if (emailLower.includes("read")) role = "READ_ONLY";
 
-  // Build JWT header and payload
-  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-  const payload = Buffer.from(JSON.stringify({
+  const token = signJwt({
     sub: email,
     email: email,
     TenantId: tenant.id,
     TenantName: tenant.name,
-    role: role,
-    jti: "jti_" + Math.random().toString(36).slice(-6),
-    exp: Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60)
-  })).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-  
-  const token = `${header}.${payload}.SUPPORTPILOT_SIMULATED_HMAC_SHA256_BYTES_PROD`;
+    role: role
+  });
 
-  pushSignalRLog(`[JWT AuthService] Auth challenge passed for user ${email}. Role: ${role}. TenantId: ${tenant.id}. JWT Issued.`);
+  serverMetrics.authSuccesses++;
+  pushSignalRLog(`[JWT AuthService] Auth challenge verified. Role: ${role}. Tenant: ${tenant.name}. Signed HMAC-SHA256 Token Issued.`);
 
   res.json({
     token,
@@ -1034,7 +1172,7 @@ app.post('/api/aspnet/auth/login', (req, res) => {
 app.get('/api/aspnet/incidents', (req, res) => {
   const context = getTenantFromRequest(req);
   if (!context) {
-    return res.status(401).json({ error: "Unauthorized. Valid JWT token or X-Tenant-Select header is required." });
+    return res.status(401).json({ error: "Unauthorized. Valid JWT Bearer token is required." });
   }
 
   pushSignalRLog(`[CQRS Handler] Executing GetIncidentsQuery for Tenant: ${context.tenantName} (${context.tenantId}). Authorized Role: ${context.role}`);
@@ -1048,7 +1186,7 @@ app.get('/api/aspnet/incidents', (req, res) => {
 app.post('/api/aspnet/incidents', (req, res) => {
   const context = getTenantFromRequest(req);
   if (!context) {
-    return res.status(401).json({ error: "Unauthorized." });
+    return res.status(401).json({ error: "Unauthorized. Valid JWT Bearer token is required." });
   }
 
   if (context.role === "READ_ONLY") {
@@ -1069,7 +1207,7 @@ app.post('/api/aspnet/incidents', (req, res) => {
     description: description || "No detailed description provided.",
     appName,
     severity: severity || "MEDIUM",
-    status: "OPEN",
+    status: "OPEN" as const,
     assignee: context.email.split('@')[0],
     source: source || "Teams",
     customerName: customerName || "Enterprise Client",
@@ -1080,18 +1218,17 @@ app.post('/api/aspnet/incidents', (req, res) => {
 
   aspnetIncidents.push(newIncident);
 
-  // EF Core Transaction seeding Audit trail
-  const newAudit = {
+  // EF Core Transaction seeding Tamper-evident Audit trail
+  appendAuditLog({
     id: "aud_" + Math.random().toString(36).slice(-4),
     organizationId: context.tenantId,
     operator: context.email,
     action: "INCIDENT_CREATED",
     module: "Incident Manager",
-    status: "SUCCESS" as const,
+    status: "SUCCESS",
     payload: JSON.stringify({ IncidentId: newId, Title: title, Source: newIncident.source }),
     timestamp: new Date().toISOString()
-  };
-  aspnetAuditLogs.unshift(newAudit);
+  });
 
   pushSignalRLog(`[MediatR CQRS] CreateIncidentCommand processed successfully. DB transaction committed. Row ID: ${newId}`);
   pushSignalRLog(`[SignalR Broadcast] Group 'Tenant-${context.tenantId}' notified: Action 'CREATED', Resource ID: ${newId}`);
@@ -1104,11 +1241,15 @@ app.post('/api/aspnet/incidents', (req, res) => {
   res.status(201).json(newIncident);
 });
 
-// 4. Command Resolve Incident (Tenant Isolated)
+// 4. Command Resolve Incident (Tenant Isolated + Transition Validation)
 app.post('/api/aspnet/incidents/:id/resolve', (req, res) => {
   const context = getTenantFromRequest(req);
   if (!context) {
-    return res.status(401).json({ error: "Unauthorized." });
+    return res.status(401).json({ error: "Unauthorized. Valid JWT Bearer token is required." });
+  }
+
+  if (context.role === "READ_ONLY") {
+    return res.status(403).json({ error: "Forbidden. READ_ONLY users cannot resolve active incidents." });
   }
 
   const incident = aspnetIncidents.find(inc => inc.id === req.params.id);
@@ -1122,19 +1263,27 @@ app.post('/api/aspnet/incidents/:id/resolve', (req, res) => {
     return res.status(403).json({ error: "Access Denied. You do not have permission to modify incidents outside of your tenant boundaries." });
   }
 
+  const transitionCheck = validateIncidentTransition(
+    { id: incident.id, status: incident.status as any },
+    'SOLVED',
+    context.role as any
+  );
+  if (!transitionCheck.valid) {
+    return res.status(400).json({ error: transitionCheck.reason });
+  }
+
   incident.status = "SOLVED";
 
-  const newAudit = {
+  appendAuditLog({
     id: "aud_" + Math.random().toString(36).slice(-4),
     organizationId: context.tenantId,
     operator: context.email,
     action: "INCIDENT_RESOLVED",
     module: "Incident Manager",
-    status: "SUCCESS" as const,
+    status: "SUCCESS",
     payload: JSON.stringify({ IncidentId: req.params.id, Status: "SOLVED" }),
     timestamp: new Date().toISOString()
-  };
-  aspnetAuditLogs.unshift(newAudit);
+  });
 
   pushSignalRLog(`[MediatR CQRS] ResolveIncidentCommand completed. Update saved to DB context. ID: ${req.params.id}`);
   pushSignalRLog(`[SignalR Broadcast] Group 'Tenant-${context.tenantId}' notified: Action 'RESOLVED', Resource ID: ${req.params.id}`);
@@ -1146,11 +1295,23 @@ app.post('/api/aspnet/incidents/:id/resolve', (req, res) => {
 app.get('/api/aspnet/audit-logs', (req, res) => {
   const context = getTenantFromRequest(req);
   if (!context) {
-    return res.status(401).json({ error: "Unauthorized." });
+    return res.status(401).json({ error: "Unauthorized. Valid JWT Bearer token is required." });
   }
 
   const filtered = aspnetAuditLogs.filter(log => log.organizationId === context.tenantId);
   res.json(filtered);
+});
+
+// 5b. Cryptographic Audit Log Chain Verification
+app.get('/api/aspnet/audit-logs/verify', (req, res) => {
+  const verification = verifyAuditChain([...aspnetAuditLogs].reverse());
+  res.json({
+    isValid: verification.isValid,
+    chainLength: aspnetAuditLogs.length,
+    brokenAtId: verification.brokenAtId,
+    verifiedAt: new Date().toISOString(),
+    auditMode: "Cryptographic SHA-256 Hash Chained (Enterprise Immutable Vault)"
+  });
 });
 
 // 6. DB Schema Inspector

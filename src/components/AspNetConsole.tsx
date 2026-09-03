@@ -170,9 +170,12 @@ export default function AspNetConsole() {
       if (data.token) {
         setJwtToken(data.token);
         
-        // Parse simulated claims
+        // Parse simulated claims safely handling base64url padding
         const payloadBase64 = data.token.split('.')[1];
-        const decoded = JSON.parse(atob(payloadBase64));
+        const normalized = payloadBase64.replace(/-/g, '+').replace(/_/g, '/');
+        const pad = normalized.length % 4;
+        const padded = pad ? normalized + '='.repeat(4 - pad) : normalized;
+        const decoded = JSON.parse(decodeURIComponent(escape(atob(padded))));
         setDecodedClaims(decoded);
         
         addCommandLog(`SUCCESS: JWT Bearer Token issued for tenant context: ${decoded.TenantName}`);
