@@ -1,9 +1,7 @@
 # SupportPilot AI - Enterprise Operations & Autonomous Incident Remediation Platform
 
-[![Build Status](https://img.shields.io/badge/build-passing-emerald.svg)](https://ai.studio/build)
-[![Platform Status](https://img.shields.io/badge/status-PRODUCTION--READY-indigo.svg)](#cto-and-software-audit-report)
-[![Security Compliance](https://img.shields.io/badge/security-HMAC--SHA256%20JWT%20%7C%20Audit%20Blockchain%20%7C%20SOC2-blue.svg)](#security--governance)
-[![Tests](https://img.shields.io/badge/tests-28%20passing%20(vitest)-brightgreen.svg)](#test-suite--quality-assurance)
+[![Status](https://img.shields.io/badge/status-in%20development-lightgrey.svg)](#project-status)
+[![Tests](https://img.shields.io/badge/tests-vitest-brightgreen.svg)](#test-suite--quality-assurance)
 [![Runtime](https://img.shields.io/badge/Node.js-v20%2B%20%7C%20Express%20%2B%20Vite-orange.svg)](#architecture--technology-stack)
 [![React](https://img.shields.io/badge/React-19.0.1-61dafb.svg)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8.2-3178c6.svg)](https://www.typescriptlang.org/)
@@ -13,33 +11,26 @@
 
 ## 📋 Executive Overview & Readiness Summary
 
-**SupportPilot AI** is a mission-critical, enterprise-grade incident management, AI-assisted autonomous remediation, and observability cockpit designed for modern SRE, DevOps, and L1/L2/L3 Incident Response teams.
+**SupportPilot AI** is an incident management, AI-assisted autonomous remediation, and observability cockpit designed for modern SRE, DevOps, and L1/L2/L3 Incident Response teams.
 
 The platform unifies raw telemetry monitoring, multi-tenant ASP.NET Core & EF Core enterprise backend patterns, and multi-tier Gemini AI reasoning into a cohesive, high-performance web platform. By pairing real-time SignalR alerting with automated root cause analysis (RCA), cryptographic tamper-evident audit logging, and parameterized runbook execution, SupportPilot AI accelerates Mean Time to Detect (MTTD) and Mean Time to Resolve (MTTR).
 
 ---
 
-## 🔍 CTO & Software Audit Report
+## Project status
 
-### Audit Summary
-- **Auditor:** Alex Vance (Lead Security Architect & Administrator)
-- **Deployment Status:** **READY FOR PRODUCTION DEPLOYMENT**
-- **Code Quality Grade:** **A+ (0 Linter Errors, 0 TypeScript Diagnostic Failures, Clean Build)**
-- **Test Suite Status:** **100% Passing (28 Vitest Unit & Integration Tests)**
-- **Security Posture:** Enterprise Grade (Cryptographic HMAC-SHA256 JWT, SHA-256 Chained Immutable Audit Vault, Inactivity Auto-Lock Shield, Multi-Tenant Isolation)
+In development by AIPG. Not externally audited and not certified (no SOC 2 or ISO 27001 attestation). The checks below are what the code and its own test suite cover; verify them with `npm test` and `npm run build` before relying on them.
 
-### 🛡️ Audited Core Subsystems & Verification Results
-
-| Subsystem Module | Key Functionality Tested | Status | Verification Detail |
-| :--- | :--- | :---: | :--- |
-| **Authentication & RBAC** | HMAC-SHA256 JWT, Google OAuth, Phone OTP, 2FA TOTP | ✅ VERIFIED | Cryptographically signed tokens; role enforcement (`CTO`, `ADMIN`, `L2_ENGINEER`, `L1_ENGINEER`, `READ_ONLY`) prevents privilege escalation. |
-| **Multi-Tenant Boundary** | Tenant isolation in CQRS commands & queries | ✅ VERIFIED | Cross-tenant access denied with HTTP 403; tenant data partitioned at database layer. |
-| **Tamper-Evident Audit Chain** | SHA-256 blockchain-style hash chain verification | ✅ VERIFIED | Full verification via `/api/aspnet/audit-logs/verify`; single-bit tamper detection confirmed. |
-| **Incident State Machine** | Strict transition enforcement & SLA calculation | ✅ VERIFIED | Prevents invalid transitions (e.g. `CLOSED` ➔ `RESOLVED`); SLA deadlines dynamically tracked. |
-| **AI Root Cause Engine** | Multi-model Gemini fallback & heuristic safeguards | ✅ VERIFIED | Cascades from `gemini-3.6-flash` down to deterministic heuristic engine on quota exhaustion. |
-| **SignalR Alert Stream** | Real-time WebSocket/SSE simulated ticker & broadcast | ✅ VERIFIED | Live event broadcasting across active tenant groups with acknowledgment counters. |
-| **Runbook Automation** | Parameterized steps, log terminal, auto-execution | ✅ VERIFIED | Execution states logged to audit trail; parameter validation prevents malformed commands. |
-| **Container Observability** | `/api/health` & `/api/ready` probes with latency metrics | ✅ VERIFIED | Kubernetes/Cloud Run ready probes with PostgreSQL, Redis, RabbitMQ, and AI telemetry. |
+| Subsystem | What the code implements | How to check |
+| :--- | :--- | :--- |
+| Authentication & RBAC | HMAC-SHA256 JWT, role checks (`CTO`, `ADMIN`, `L2_ENGINEER`, `L1_ENGINEER`, `READ_ONLY`); Google OAuth / OTP / TOTP flows in the UI | `src/tests/production-readiness.test.ts` (JWT, roles) |
+| Multi-tenant boundary | Tenant scoping in the simulated ASP.NET-style endpoints | Manual API calls across tenants |
+| Tamper-evident audit chain | SHA-256 hash-chained audit entries with verify endpoint | Tests for `computeAuditHash`, `verifyAuditChain` |
+| Incident state machine | Transition rules and SLA calculation | Tests for `validateIncidentTransition`, `calculateSlaStatus` |
+| AI root cause engine | Gemini model cascade with deterministic fallback | Needs a Gemini key; fallback path testable offline |
+| Real-time alerts | Simulated SignalR-style stream | Manual |
+| Runbooks | Parameterized steps logged to the audit trail | Manual |
+| Health probes | `/api/health`, `/api/ready` | `curl` locally |
 
 ---
 
@@ -65,7 +56,7 @@ The platform unifies raw telemetry monitoring, multi-tenant ASP.NET Core & EF Co
 ### 3. ⛓️ Cryptographic Tamper-Evident Audit Chain
 - **SHA-256 Hash Chained Records**: Every security event, schema migration, and incident resolution is hashed using `SHA-256(id + timestamp + operator + action + module + payload + previousHash)`.
 - **On-Demand Verification (`/api/aspnet/audit-logs/verify`)**: Validates the entire audit vault chain back to the genesis block (`GENESIS_BLOCK_00000000`), pinpointing the exact entry ID if tampering occurs.
-- **Compliance Export**: One-click JSON compliance export for SOC2 Type II and ISO 27001 audits.
+- **Compliance Export**: One-click JSON export of audit evidence (input for a future compliance audit; not an attestation).
 
 ### 4. 🚨 Real-Time Incident Triage & Correlation Workspace
 - **Dynamic Views**: Grouped by Pod (`SRE & Infrastructure`, `Core Backend & DB`, `Kubernetes Platform`, `Security & IR`, `API Gateway`), flat search lists, and Sev-1 SLA countdowns.
@@ -123,7 +114,7 @@ The platform unifies raw telemetry monitoring, multi-tenant ASP.NET Core & EF Co
 │   ├── App.tsx                  # Root application component & view router
 │   ├── main.tsx                 # React DOM mount entry point
 │   ├── index.css                # Tailwind CSS v4 styling rules
-│   ├── components/              # 40+ modular production UI components
+│   ├── components/              # modular UI components
 │   │   ├── AgentOrchestrator.tsx       # Multi-agent autonomous remediation board
 │   │   ├── AspNetConsole.tsx           # Enterprise backend CQRS & JWT manager
 │   │   ├── AuditPanel.tsx              # Tamper-evident audit trail & verification
@@ -144,7 +135,7 @@ The platform unifies raw telemetry monitoring, multi-tenant ASP.NET Core & EF Co
 │   ├── server/
 │   │   └── security.ts          # HMAC JWT signer, RateLimiter & telemetry metrics
 │   ├── tests/
-│   │   └── production-readiness.test.ts # Comprehensive 24-test verification suite
+│   │   └── production-readiness.test.ts # 24-test suite
 │   ├── types/
 │   │   └── index.ts             # Strict TypeScript domain interfaces
 │   └── utils/
@@ -242,6 +233,5 @@ npm start
 ## 📄 License & Compliance
 
 Confidential & Proprietary — Enterprise Operations Platform.  
-Designed and maintained for mission-critical SRE and DevOps operations.  
 All rights reserved © 2026 SupportPilot AI.
 
