@@ -354,8 +354,8 @@ export default function AuditPanel({ auditLogs }: AuditPanelProps) {
           <div className="space-y-4">
             <div className="rounded border border-dashed border-indigo-500/30 bg-indigo-500/5 p-4 text-slate-300 leading-relaxed">
               <span className="font-bold text-indigo-400 block mb-1">Electronic Ledger Compliance Trail</span>
-              Every action taken within this SupportPilot AI console is logged securely inside our database cluster logs.
-              This log satisfies PCI-DSS, SOC-2, and GDPR audit checks on PII containment and script bypasses.
+              Every action taken within this SupportPilot AI console is written to this audit log.
+              The log has not been assessed against any standard (PCI-DSS, SOC 2, GDPR or other).
             </div>
 
             {/* Advanced Filters Bar */}
