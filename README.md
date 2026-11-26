@@ -20,7 +20,7 @@ The platform unifies raw telemetry monitoring, multi-tenant ASP.NET Core & EF Co
 ## Project status
 
 > **Merged into AIPG Support Desk.** The parts of SupportPilot that a support desk needs (a tamper-evident audit
-> trail, an AI-assisted reply draft) are being carried into [AIPG Support Desk](https://github.com/EshanBarua14/AIPG-Support-Desk),
+> trail, an AI-assisted reply draft) were carried into [AIPG Support Desk](https://github.com/EshanBarua14/AIPG-Support-Desk),
 > the ASP.NET Core product AIPG sells and demos. New work on the support desk happens there; this repository is
 > kept as a reference and is not developed further on its own.
 
